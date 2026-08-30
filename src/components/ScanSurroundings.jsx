@@ -1,10 +1,10 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { ArrowLeft, Camera, Volume2, RotateCcw, Upload } from 'lucide-react';
-import { analyzeSurroundings, getDemoScanResponse } from '../services/gemini';
+import { analyzeSurroundings } from '../services/gemini';
 import { resizeImageToBase64 } from '../utils/imageUtils';
 
 export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
-  const { language = 'en', apiKey = '', demoMode = false } = appState || {};
+  const { language = 'en', apiKey = '' } = appState || {};
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -17,9 +17,10 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
   const [error, setError] = useState(null);
   const [cameraError, setCameraError] = useState(null);
 
+  // Stop camera helper
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
     if (videoRef.current) {
@@ -28,6 +29,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
     setCameraActive(false);
   }, []);
 
+  // Universal camera initializer (works on mobile and PC/laptops)
   const startCamera = useCallback(async () => {
     setError(null);
     setCameraError(null);
@@ -54,7 +56,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
         try {
           await videoRef.current.play();
         } catch (e) {
-          console.warn('Auto play handled:', e);
+          console.warn('Auto-play caught:', e);
         }
       }
       setCameraActive(true);
@@ -63,18 +65,20 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
       }
     } catch (err) {
       console.error('Camera startup error:', err);
-      setCameraError('Camera access denied or not available. Please allow camera permissions or upload an image.');
+      setCameraError('Camera access denied or device unavailable. Please allow camera permissions or upload an image.');
       if (ttsSpeak) {
         ttsSpeak('Camera not available. You can upload an image instead.');
       }
     }
   }, [ttsSpeak]);
 
+  // Mount/unmount lifecycle
   useEffect(() => {
     startCamera();
     return () => stopCamera();
   }, [startCamera, stopCamera]);
 
+  // Direct Live Gemini Vision API Call
   const analyzeImage = useCallback(
     async (dataUrl) => {
       setIsAnalyzing(true);
@@ -85,14 +89,8 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
       }
 
       try {
-        let scanResult;
-        if (demoMode) {
-          await new Promise((r) => setTimeout(r, 1500));
-          scanResult = getDemoScanResponse(language);
-        } else {
-          const resized = await resizeImageToBase64(dataUrl, 1024, 1024, 0.85);
-          scanResult = await analyzeSurroundings(resized, language, apiKey);
-        }
+        const resized = await resizeImageToBase64(dataUrl, 1024, 1024, 0.85);
+        const scanResult = await analyzeSurroundings(resized, language, apiKey);
 
         setResult(scanResult);
         setIsAnalyzing(false);
@@ -101,6 +99,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
           ttsSpeak(scanResult.description);
         }
       } catch (err) {
+        console.error('Gemini vision error:', err);
         setIsAnalyzing(false);
         const msg = err instanceof Error ? err.message : 'Analysis failed. Please try again.';
         setError(msg);
@@ -109,9 +108,10 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
         }
       }
     },
-    [demoMode, apiKey, language, ttsSpeak]
+    [apiKey, language, ttsSpeak]
   );
 
+  // Capture frame from video feed
   const capture = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
@@ -126,6 +126,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
     await analyzeImage(dataUrl);
   }, [stopCamera, analyzeImage]);
 
+  // Handle manual file upload
   const handleUpload = useCallback(
     async (e) => {
       const file = e.target.files?.[0];
@@ -193,11 +194,20 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
           gap: 24,
         }}
       >
-        {/* Camera / Image Container */}
+        {/* Camera / Captured image display */}
         <div>
-          <div className="camera-wrap" style={{ position: 'relative', width: '100%', minHeight: '380px', borderRadius: '16px', overflow: 'hidden', background: '#070b19' }}>
-            
-            {/* Always mounted video element ensures immediate stream binding */}
+          <div
+            className="camera-wrap"
+            style={{
+              position: 'relative',
+              width: '100%',
+              minHeight: '380px',
+              borderRadius: '16px',
+              overflow: 'hidden',
+              background: '#070b19',
+            }}
+          >
+            {/* Live video feed */}
             <video
               ref={videoRef}
               autoPlay
@@ -213,16 +223,22 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
               aria-label="Live camera feed"
             />
 
-            {/* Captured Image Preview */}
+            {/* Captured frame preview */}
             {capturedImage && (
               <img
                 src={capturedImage}
-                alt="Captured scene"
-                style={{ width: '100%', height: '100%', minHeight: '380px', objectFit: 'cover', display: 'block' }}
+                alt="Captured scene for analysis"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  minHeight: '380px',
+                  objectFit: 'cover',
+                  display: 'block',
+                }}
               />
             )}
 
-            {/* Error or Loading Overlay */}
+            {/* Camera error state */}
             {cameraError && !capturedImage && (
               <div
                 style={{
@@ -242,7 +258,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
               </div>
             )}
 
-            {/* Analyzing Overlay */}
+            {/* Analyzing overlay */}
             {isAnalyzing && (
               <div
                 style={{
@@ -263,13 +279,22 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
             )}
           </div>
 
-          {/* Capture Controls */}
-          <div className="capture-controls" style={{ marginTop: 20, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 20 }}>
-            {/* Upload */}
+          {/* Controls toolbar */}
+          <div
+            className="capture-controls"
+            style={{
+              marginTop: 20,
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 20,
+            }}
+          >
+            {/* Upload file */}
             <button
               className="btn btn-ghost btn-icon-only"
               onClick={() => fileRef.current?.click()}
-              aria-label="Upload image"
+              aria-label="Upload an image file"
               title="Upload image"
             >
               <Upload size={20} />
@@ -282,13 +307,13 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
               onChange={handleUpload}
             />
 
-            {/* Main Action Button */}
+            {/* Main Action (Capture / Reset) */}
             {!capturedImage ? (
               <button
                 className="capture-btn"
                 onClick={capture}
                 disabled={isAnalyzing}
-                aria-label="Capture frame"
+                aria-label="Capture photo and analyze surroundings"
               >
                 <Camera size={30} />
               </button>
@@ -301,19 +326,20 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
                   setError(null);
                   startCamera();
                 }}
-                aria-label="Scan again"
+                aria-label="Scan again - open camera"
                 style={{ background: 'linear-gradient(135deg, #6366F1, #22D3EE)' }}
               >
                 <RotateCcw size={28} />
               </button>
             )}
 
-            {/* Read aloud trigger */}
+            {/* Repeat TTS voice output */}
             {result && (
               <button
                 className="btn btn-ghost btn-icon-only"
                 onClick={() => result?.description && ttsSpeak && ttsSpeak(result.description)}
-                aria-label="Repeat description aloud"
+                aria-label="Read description aloud again"
+                title="Read aloud"
               >
                 <Volume2 size={20} />
               </button>
@@ -324,12 +350,14 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
                 className="btn btn-ghost btn-icon-only"
                 onClick={startCamera}
                 aria-label="Retry camera"
+                title="Retry camera"
               >
                 <RotateCcw size={20} />
               </button>
             )}
           </div>
 
+          {/* Offscreen canvas */}
           <canvas ref={canvasRef} style={{ display: 'none' }} />
         </div>
 
@@ -351,10 +379,22 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
 
             {result && !isAnalyzing && (
               <>
+                {/* Scene description card */}
                 <div className="result-card" style={{ marginBottom: 16 }}>
-                  <div className="result-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div
+                    className="result-header"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: 12,
+                    }}
+                  >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div className="result-icon" style={{ background: 'rgba(99,102,241,0.15)', padding: 8, borderRadius: 8 }}>
+                      <div
+                        className="result-icon"
+                        style={{ background: 'rgba(99,102,241,0.15)', padding: 8, borderRadius: 8 }}
+                      >
                         🔊
                       </div>
                       <div>
@@ -375,15 +415,26 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
                   </p>
                 </div>
 
+                {/* Spatial object detection breakdown */}
                 {result.objects && result.objects.length > 0 && (
                   <div className="result-card">
-                    <div className="result-header" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div className="result-icon" style={{ background: 'rgba(34,211,238,0.12)', padding: 8, borderRadius: 8 }}>
+                    <div
+                      className="result-header"
+                      style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}
+                    >
+                      <div
+                        className="result-icon"
+                        style={{ background: 'rgba(34,211,238,0.12)', padding: 8, borderRadius: 8 }}
+                      >
                         📍
                       </div>
                       <div className="result-title" style={{ fontWeight: 600 }}>Detected Objects</div>
                     </div>
-                    <div className="detection-list" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div
+                      className="detection-list"
+                      style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
+                      role="list"
+                    >
                       {result.objects.map((obj, i) => (
                         <div
                           key={i}
@@ -395,8 +446,9 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
                             padding: '10px 14px',
                             background: 'rgba(255,255,255,0.03)',
                             borderRadius: '10px',
-                            border: '1px solid rgba(255,255,255,0.06)'
+                            border: '1px solid rgba(255,255,255,0.06)',
                           }}
+                          role="listitem"
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <span style={{ fontSize: 18 }}>
