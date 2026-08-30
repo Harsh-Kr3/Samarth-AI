@@ -188,12 +188,7 @@ export default function VoiceAssistant({ onBack, appState, ttsSpeak, onNavigate 
         </div>
       </div>
 
-      {demoMode && (
-        <div className="alert alert-info" style={{ marginBottom: 20 }} role="status">
-          <span>🎭</span>
-          <span>Demo Mode — pre-written responses. Add Gemini API key for real AI conversation.</span>
-        </div>
-      )}
+      
 
       <div className="voice-screen">
         {/* Mic orb + waveform */}

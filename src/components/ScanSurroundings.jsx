@@ -155,13 +155,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
         </div>
       </div>
 
-      {/* Demo mode notice */}
-      {demoMode && (
-        <div className="alert alert-info" style={{ marginBottom: 20 }} role="status">
-          <span>🎭</span>
-          <span>Demo Mode — showing sample AI responses. Add your Gemini API key (🔑 in navbar) for real analysis.</span>
-        </div>
-      )}
+  
 
       <div style={{ display: 'grid', gridTemplateColumns: capturedImage ? '1fr 1fr' : '1fr', gap: 24, alignItems: 'start' }}>
         {/* Camera / Captured image */}

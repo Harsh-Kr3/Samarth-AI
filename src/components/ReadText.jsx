@@ -135,12 +135,7 @@ export default function ReadText({ onBack, appState, ttsSpeak }) {
         </div>
       </div>
 
-      {demoMode && (
-        <div className="alert alert-info" style={{ marginBottom: 20 }} role="status">
-          <span>🎭</span>
-          <span>Demo Mode — showing sample OCR result. Add Gemini API key for real text extraction.</span>
-        </div>
-      )}
+      
 
       <div style={{ display: 'grid', gridTemplateColumns: capturedImage ? '1fr 1fr' : '1fr', gap: 24, alignItems: 'start' }}>
         {/* Camera */}
