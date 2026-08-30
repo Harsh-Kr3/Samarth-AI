@@ -7,8 +7,9 @@ function sanitizeBase64(input) {
 
 // Active models
 const VISION_MODELS = [
-  'gemini-3.6-flash',
-  'gemini-3.6-pro'
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-2.5-pro'
 ];
 
 async function callGeminiVision(payload, apiKey) {
