@@ -5,12 +5,10 @@ function sanitizeBase64(input) {
   return input.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
 }
 
-// Fallback chain across active Gemini vision models
+// Active models
 const VISION_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash-latest',
-  'gemini-flash-latest',
-  'gemini-1.5-pro-latest'
+  'gemini-3.6-flash',
+  'gemini-3.6-pro'
 ];
 
 async function callGeminiVision(payload, apiKey) {
@@ -27,7 +25,7 @@ async function callGeminiVision(payload, apiKey) {
       });
 
       if (res.status === 503 || res.status === 429) {
-        console.warn(`Model ${model} overloaded (HTTP ${res.status}), trying next candidate...`);
+        console.warn(`Model ${model} busy (${res.status}), trying next candidate...`);
         continue;
       }
 
@@ -43,10 +41,10 @@ async function callGeminiVision(payload, apiKey) {
       console.warn(`Network error requesting ${model}:`, err.message);
     }
   }
-  throw new Error('All vision model endpoints are temporarily overloaded.');
+  throw new Error('All model endpoints failed.');
 }
 
-// 1. Scan / Surroundings Analysis
+// 1. Scan Surroundings
 export async function analyzeSurroundings(arg1, arg2, arg3) {
   let imageBase64 = '';
   let language = 'en';
@@ -71,20 +69,20 @@ export async function analyzeSurroundings(arg1, arg2, arg3) {
   }
 
   const promptText = `You are SAMARTH AI, an assistive visual interpreter for visually impaired users.
-Analyze the user's camera feed accurately and concisely.
-Return ONLY a valid JSON object matching this structure:
+Analyze what is shown in front of the camera in detail and describe it clearly.
+Provide a strictly valid JSON response with this exact structure:
 {
-  "description": "A concise 2-sentence description of what is visible in front of the camera in ${language === 'hi' ? 'Hindi' : 'English'}.",
+  "description": "A concise 2-sentence description of the scene in ${language === 'hi' ? 'Hindi' : 'English'}.",
   "objects": [
     {
-      "name": "Object name",
+      "name": "Exact name of detected object",
       "direction": "CENTER",
       "position": "CENTER",
-      "distance": "close"
+      "distance": "held in hand"
     }
   ]
 }
-Note: "direction" must be one of: "CENTER", "LEFT", "RIGHT", "SLIGHTLY_LEFT", "SLIGHTLY_RIGHT". Respond strictly with JSON only.`;
+Note: "direction" must be one of: "CENTER", "LEFT", "RIGHT", "SLIGHTLY_LEFT", "SLIGHTLY_RIGHT". Return JSON only without markdown code blocks.`;
 
   const payload = {
     contents: [
@@ -119,7 +117,7 @@ Note: "direction" must be one of: "CENTER", "LEFT", "RIGHT", "SLIGHTLY_LEFT", "S
 
     return parsed;
   } catch (err) {
-    console.warn('Gemini live analysis error, falling back:', err);
+    console.warn('Gemini live analysis fallback:', err);
     return getDemoScanResponse(language);
   }
 }
@@ -188,22 +186,22 @@ export async function chatWithAssistant(prompt, language = 'en', userApiKey = nu
   }
 }
 
-// --- Compatibility Aliases ---
+// --- Aliases ---
 export const readText = extractText;
 export const analyzeScene = analyzeSurroundings;
 export const askAssistant = chatWithAssistant;
 export const askVoiceAssistant = chatWithAssistant;
 
-// --- Demo / Fallback Handlers ---
+// --- Fallbacks ---
 export function getDemoScanResponse(language = 'en') {
   return language === 'hi'
     ? {
-        description: 'कैमरे के सामने नीले चेक वाला कपड़ा और व्यक्ति दिखाई दे रहा है।',
-        objects: [{ name: 'कपड़ा / शर्ट', direction: 'CENTER', position: 'CENTER', distance: 'निकट' }],
+        description: 'कैमरे के सामने एक वस्तु दिखाई दे रही है।',
+        objects: [{ name: 'वस्तु', direction: 'CENTER', position: 'CENTER', distance: 'हाथ में' }],
       }
     : {
-        description: 'You are viewing clothing with a blue checkered pattern in front of the camera.',
-        objects: [{ name: 'Checkered Fabric / Shirt', direction: 'CENTER', position: 'CENTER', distance: 'close' }],
+        description: 'You are holding an object in front of the camera.',
+        objects: [{ name: 'Object', direction: 'CENTER', position: 'CENTER', distance: 'held in hand' }],
       };
 }
 
