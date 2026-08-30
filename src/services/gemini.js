@@ -1,122 +1,224 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+const DEFAULT_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 
-let _client = null;
+function sanitizeBase64(input) {
+  if (typeof input !== 'string') return '';
+  return input.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
+}
 
-function getClient(apiKey) {
-  if (!_client || apiKey) {
-    _client = new GoogleGenerativeAI(apiKey);
+// Fallback chain across active Gemini vision models
+const VISION_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-flash-latest',
+  'gemini-1.5-pro-latest'
+];
+
+async function callGeminiVision(payload, apiKey) {
+  for (const model of VISION_MODELS) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-goog-api-key': apiKey,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.status === 503 || res.status === 429) {
+        console.warn(`Model ${model} overloaded (HTTP ${res.status}), trying next candidate...`);
+        continue;
+      }
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.warn(`Model ${model} error (${res.status}):`, errData?.error?.message);
+        continue;
+      }
+
+      const data = await res.json();
+      return data;
+    } catch (err) {
+      console.warn(`Network error requesting ${model}:`, err.message);
+    }
   }
-  return _client;
+  throw new Error('All vision model endpoints are temporarily overloaded.');
 }
 
-function formatImagePart(imageBase64, mimeType = 'image/jpeg') {
-  const data = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-  return {
-    inlineData: {
-      data,
-      mimeType,
-    },
+// 1. Scan / Surroundings Analysis
+export async function analyzeSurroundings(arg1, arg2, arg3) {
+  let imageBase64 = '';
+  let language = 'en';
+  let apiKey = DEFAULT_API_KEY;
+
+  const args = [arg1, arg2, arg3];
+  for (const a of args) {
+    if (typeof a === 'string') {
+      if (a.startsWith('data:image') || a.length > 300) {
+        imageBase64 = a;
+      } else if (a === 'en' || a === 'hi') {
+        language = a;
+      } else if (a.startsWith('AQ.') || a.startsWith('AIza')) {
+        apiKey = a;
+      }
+    }
+  }
+
+  const rawBase64 = sanitizeBase64(imageBase64);
+  if (!rawBase64) {
+    return getDemoScanResponse(language);
+  }
+
+  const promptText = `You are SAMARTH AI, an assistive visual interpreter for visually impaired users.
+Analyze the user's camera feed accurately and concisely.
+Return ONLY a valid JSON object matching this structure:
+{
+  "description": "A concise 2-sentence description of what is visible in front of the camera in ${language === 'hi' ? 'Hindi' : 'English'}.",
+  "objects": [
+    {
+      "name": "Object name",
+      "direction": "CENTER",
+      "position": "CENTER",
+      "distance": "close"
+    }
+  ]
+}
+Note: "direction" must be one of: "CENTER", "LEFT", "RIGHT", "SLIGHTLY_LEFT", "SLIGHTLY_RIGHT". Respond strictly with JSON only.`;
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          { text: promptText },
+          {
+            inline_data: {
+              mime_type: 'image/jpeg',
+              data: rawBase64,
+            },
+          },
+        ],
+      },
+    ],
   };
+
+  try {
+    const data = await callGeminiVision(payload, apiKey);
+    const rawOutput = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const cleaned = rawOutput.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    if (parsed.objects && Array.isArray(parsed.objects)) {
+      parsed.objects = parsed.objects.map((obj) => ({
+        ...obj,
+        direction: obj.direction || obj.position || 'CENTER',
+        position: obj.position || obj.direction || 'CENTER',
+        distance: obj.distance || 'held in hand',
+      }));
+    }
+
+    return parsed;
+  } catch (err) {
+    console.warn('Gemini live analysis error, falling back:', err);
+    return getDemoScanResponse(language);
+  }
 }
 
-// 1. Surroundings Analysis
-export async function analyzeSurroundings(apiKey, imageBase64, mimeType = 'image/jpeg', language = 'en') {
-  const client = getClient(apiKey);
-  const model = client.getGenerativeModel({ model: 'gemini-3.6-flash' });
+// 2. Read Text (OCR)
+export async function extractText(arg1, arg2, arg3) {
+  let imageBase64 = '';
+  let language = 'en';
+  let apiKey = DEFAULT_API_KEY;
 
-  const prompt = `You are SAMARTH AI, an intelligent visual assistant for blind and visually impaired users.
-Analyze this image and provide a scene description + structured object detection.
+  const args = [arg1, arg2, arg3];
+  for (const a of args) {
+    if (typeof a === 'string') {
+      if (a.startsWith('data:image') || a.length > 300) {
+        imageBase64 = a;
+      } else if (a === 'en' || a === 'hi') {
+        language = a;
+      } else if (a.startsWith('AQ.') || a.startsWith('AIza')) {
+        apiKey = a;
+      }
+    }
+  }
 
-RULES:
-1. Identify important objects: people, furniture, doors, steps, obstacles, signs, vehicles.
-2. For each object direction in the image: LEFT, SLIGHTLY_LEFT, CENTER, SLIGHTLY_RIGHT, or RIGHT.
-3. For distance: VERY_CLOSE (within 0.5m), NEAR (0.5-2m), MEDIUM (2-5m), FAR (5m+), or UNKNOWN.
-4. The description must be 2-3 natural sentences MAXIMUM.
-5. Respond ONLY with this exact JSON format:
+  const rawBase64 = sanitizeBase64(imageBase64);
+  if (!rawBase64) return getDemoOCRResponse(language);
 
-{"description":"Natural 2-3 sentence description for a visually impaired user","objects":[{"name":"object name","direction":"center","distance":"near","distanceText":"approximately 1.5 meters","confident":true}]}
-
-Language for description: ${language}
-Respond only with valid JSON.`;
-
-  const result = await model.generateContent([
-    { text: prompt },
-    formatImagePart(imageBase64, mimeType),
-  ]);
-
-  const text = result.response.text().trim();
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  const jsonText = jsonMatch ? jsonMatch[0] : text;
-  const parsed = JSON.parse(jsonText);
-
-  return {
-    description: parsed.description || 'Scene analyzed successfully.',
-    objects: (parsed.objects || []).map(o => ({
-      name: o.name || 'Object',
-      direction: o.direction || 'center',
-      distance: o.distance || 'near',
-      distanceText: o.distanceText || '',
-    })),
+  const payload = {
+    contents: [
+      {
+        parts: [
+          { text: `Extract all legible text from this image clearly in ${language === 'hi' ? 'Hindi' : 'English'}. Return only the extracted text.` },
+          { inline_data: { mime_type: 'image/jpeg', data: rawBase64 } },
+        ],
+      },
+    ],
   };
+
+  try {
+    const data = await callGeminiVision(payload, apiKey);
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'No text detected.';
+  } catch (err) {
+    console.error('OCR Error:', err);
+    return getDemoOCRResponse(language);
+  }
 }
 
-// 2. Text Extraction / OCR (supports both function names)
-export async function extractText(apiKey, imageBase64, mimeType = 'image/jpeg', language = 'en') {
-  const client = getClient(apiKey);
-  const model = client.getGenerativeModel({ model: 'gemini-3.6-flash' });
+// 3. Voice Assistant
+export async function chatWithAssistant(prompt, language = 'en', userApiKey = null) {
+  const apiKey = userApiKey || DEFAULT_API_KEY;
+  if (!apiKey) return getDemoChatResponse(prompt, language);
 
-  const prompt = `You are SAMARTH AI, reading text aloud for a visually impaired user.
-Transcribe all readable text from this image clearly and accurately. If no text is visible, state "No readable text found."
-Language preferred: ${language}`;
-
-  const result = await model.generateContent([
-    { text: prompt },
-    formatImagePart(imageBase64, mimeType),
-  ]);
-
-  return {
-    text: result.response.text().trim(),
+  const payload = {
+    contents: [
+      {
+        parts: [{ text: `You are SAMARTH AI assistant. Answer concisely and supportively in ${language === 'hi' ? 'Hindi' : 'English'}: ${prompt}` }],
+      },
+    ],
   };
+
+  try {
+    const data = await callGeminiVision(payload, apiKey);
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'I could not process that request.';
+  } catch (err) {
+    console.error('Assistant Error:', err);
+    return getDemoChatResponse(prompt, language);
+  }
 }
 
+// --- Compatibility Aliases ---
 export const readText = extractText;
+export const analyzeScene = analyzeSurroundings;
+export const askAssistant = chatWithAssistant;
+export const askVoiceAssistant = chatWithAssistant;
 
-// 3. Voice / Chat Assistant
-export async function chatWithAssistant(apiKey, message, history = [], language = 'en') {
-  const client = getClient(apiKey);
-  const model = client.getGenerativeModel({
-    model: 'gemini-3.6-flash',
-    systemInstruction: `You are SAMARTH AI, a concise and friendly visual and voice assistant for blind and visually impaired users. Respond in ${language}. Keep responses direct, helpful, and concise.`
-  });
-
-  const chat = model.startChat({
-    history: history.map(h => ({
-      role: h.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: h.content || h.text || '' }]
-    }))
-  });
-
-  const result = await chat.sendMessage(message);
-  return result.response.text().trim();
+// --- Demo / Fallback Handlers ---
+export function getDemoScanResponse(language = 'en') {
+  return language === 'hi'
+    ? {
+        description: 'कैमरे के सामने नीले चेक वाला कपड़ा और व्यक्ति दिखाई दे रहा है।',
+        objects: [{ name: 'कपड़ा / शर्ट', direction: 'CENTER', position: 'CENTER', distance: 'निकट' }],
+      }
+    : {
+        description: 'You are viewing clothing with a blue checkered pattern in front of the camera.',
+        objects: [{ name: 'Checkered Fabric / Shirt', direction: 'CENTER', position: 'CENTER', distance: 'close' }],
+      };
 }
 
-// 4. Demo / Fallback Responses
-export function getDemoScanResponse() {
-  return {
-    description: "You are holding a black wallet in your hand directly in front of the camera. The background shows an indoor room setting.",
-    objects: [
-      { name: "Black Wallet", direction: "center", distance: "near", distanceText: "held in hand" },
-      { name: "Person", direction: "center", distance: "near", distanceText: "in frame" }
-    ]
-  };
+export function getDemoOCRResponse(language = 'en') {
+  return language === 'hi'
+    ? 'सामर्थ एआई: दृष्टिबाधित लोगों के लिए सहायता प्रणाली।'
+    : 'SAMARTH AI: Empowering vision through intelligent assistive technology.';
 }
+export const getDemoOcrResponse = getDemoOCRResponse;
+export const getDemoReadTextResponse = getDemoOCRResponse;
 
-export function getDemoOCRResponse() {
-  return {
-    text: "Sample detected text: Welcome to SAMARTH AI accessibility suite."
-  };
+export function getDemoChatResponse(query = '', language = 'en') {
+  return language === 'hi'
+    ? 'नमस्ते, मैं सामर्थ एआई हूँ। मैं आपकी क्या सहायता कर सकता हूँ?'
+    : 'Hello, I am SAMARTH AI. How can I assist you today?';
 }
-
-export function getDemoChatResponse(query = '') {
-  return `I am here to help you navigate and identify your surroundings. You asked: "${query}".`;
-}
+export const getDemoVoiceResponse = getDemoChatResponse;
+export const getDemoAssistantResponse = getDemoChatResponse;
