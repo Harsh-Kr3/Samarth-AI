@@ -97,7 +97,7 @@ export default function ReadText({ onBack, appState, ttsSpeak }) {
       try {
         let textContent = '';
 
-        if (demoMode || !apiKey) {
+        if (demoMode && !apiKey && !import.meta.env.VITE_GEMINI_API_KEY) {
           await new Promise((r) => setTimeout(r, 1200));
           const demo = getDemoOCRResponse(language);
           textContent = typeof demo === 'object' ? (demo.text || '') : demo;
