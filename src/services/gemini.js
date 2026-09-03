@@ -46,8 +46,8 @@ export async function analyzeSurroundings(base64Image, language = 'en', customKe
   const cleanBase64 = base64Image.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
 
   const prompt = language === 'hi'
-    ? 'इस दृश्य का विश्लेषण करें। मुख्य वस्तुओं, उनकी दिशा (LEFT, CENTER, RIGHT) और दूरी बताएं। JSON: {"description": "...", "objects": [{"name": "...", "position": "CENTER", "distance": "near"}]}'
-    : 'Analyze this scene for a visually impaired user. Identify key objects, direction (LEFT, CENTER, RIGHT), and distance. JSON: {"description": "...", "objects": [{"name": "...", "position": "CENTER", "distance": "near"}]}';
+    ? 'इस दृश्य का विश्लेषण करें। मुख्य वस्तुओं की पहचान करें, उनकी दिशा (LEFT, CENTER, RIGHT) और कैमरे से अनुमानित दूरी (जैसे "0.5m", "1.2m", "2m") बताएं। केवल शुद्ध JSON उत्तर दें: {"description": "...", "objects": [{"name": "...", "position": "CENTER", "distance": "0.8m"}]}'
+    : 'Analyze this scene for a visually impaired user. Identify key visible objects, their spatial direction (LEFT, CENTER, RIGHT), and their estimated distance from the camera (e.g. "0.5m", "1.2m", "2m"). Respond ONLY in valid JSON: {"description": "...", "objects": [{"name": "...", "position": "CENTER", "distance": "0.8m"}]}';
 
   let lastError = null;
 
@@ -140,19 +140,25 @@ export async function chatWithAssistant(userMessage, history = [], customKey = '
 }
 
 /**
- * Fallbacks for offline / mock testing
+ * Demo / Fallback helpers
  */
 export function getDemoScanResponse(language = 'en') {
   return {
     description: language === 'hi'
       ? 'सामने एक व्यक्ति और कमरा दिखाई दे रहा है।'
       : 'A person is visible in front of the camera.',
-    objects: [{ name: 'Person', position: 'center', distance: 'near' }],
+    objects: [{ name: 'Person', position: 'center', distance: '0.8m' }],
   };
 }
 
 export function getDemoOCRResponse(language = 'en') {
   return language === 'hi'
-    ? 'यह एक डेमो टेक्स्ट है। वास्तविक पहचान के लिए एपीआई सक्रिय है।'
+    ? 'यह एक डेमो पाठ है। वास्तविक पहचान के लिए एपीआई सक्रिय है।'
     : 'This is sample extracted text. Real OCR is connected.';
+}
+
+export function getDemoChatResponse(message = '', language = 'en') {
+  return language === 'hi'
+    ? `नमस्ते! मैं समर्थ एआई सहायक हूँ। आपने कहा: "${message}"`
+    : `Hello! I am Samarth AI assistant. You said: "${message}"`;
 }
