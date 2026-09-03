@@ -140,7 +140,7 @@ export async function chatWithAssistant(userMessage, history = [], customKey = '
 }
 
 /**
- * Fallbacks for offline / mock testing
+ * Demo / Mock fallbacks
  */
 export function getDemoScanResponse(language = 'en') {
   return {
@@ -155,4 +155,10 @@ export function getDemoOCRResponse(language = 'en') {
   return language === 'hi'
     ? 'यह एक डेमो टेक्स्ट है। वास्तविक पहचान के लिए एपीआई सक्रिय है।'
     : 'This is sample extracted text. Real OCR is connected.';
+}
+
+export function getDemoChatResponse(message = '', language = 'en') {
+  return language === 'hi'
+    ? `नमस्ते! मैं समर्थ एआई सहायक हूँ। आपने कहा: "${message}"`
+    : `Hello! I am Samarth AI assistant. You said: "${message}"`;
 }
