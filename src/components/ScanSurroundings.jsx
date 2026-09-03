@@ -77,7 +77,30 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
     startCamera();
     return () => stopCamera();
   }, [startCamera, stopCamera]);
+  const buildNarration = (data, lang = 'en') => {
+    if (!data) return '';
+    let speech = data.description || '';
 
+    if (data.objects && data.objects.length > 0) {
+      if (lang === 'hi') {
+        const items = data.objects
+          .map((o) => `${o.name}, दिशा ${o.position === 'CENTER' ? 'सामने' : o.position === 'LEFT' ? 'बाईं ओर' : 'दाईं ओर'}, दूरी ${o.distance || 'नजदीक'}`)
+          .join('। ');
+        speech += `। सामने मौजूद वस्तुएं: ${items}`;
+      } else if (lang === 'bn') {
+        const items = data.objects
+          .map((o) => `${o.name}, দিক ${o.position === 'CENTER' ? 'सामনে' : o.position === 'LEFT' ? 'বাঁদিকে' : 'ডানদিকে'}, দূরত্ব ${o.distance || 'কাছে'}`)
+          .join('। ');
+        speech += `। চিহ্নিত বস্তু: ${items}`;
+      } else {
+        const items = data.objects
+          .map((o) => `${o.name} on the ${o.position?.toLowerCase() || 'center'}, distance ${o.distance || 'near'}`)
+          .join(', ');
+        speech += `. Detected objects: ${items}`;
+      }
+    }
+    return speech;
+  };
   // Direct Live Gemini Vision API Call
   const analyzeImage = useCallback(
     async (dataUrl) => {
@@ -95,9 +118,9 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
         setResult(scanResult);
         setIsAnalyzing(false);
 
-        if (scanResult && scanResult.description && ttsSpeak) {
-          ttsSpeak(scanResult.description);
-        }
+        if (scanResult && ttsSpeak) {
+        ttsSpeak(buildNarration(scanResult, language), language);
+      }
       } catch (err) {
         console.error('Gemini vision error:', err);
         setIsAnalyzing(false);
@@ -337,7 +360,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
             {result && (
               <button
                 className="btn btn-ghost btn-icon-only"
-                onClick={() => result?.description && ttsSpeak && ttsSpeak(result.description)}
+                onClick={() => result && ttsSpeak && ttsSpeak(buildNarration(result, language), language)}
                 aria-label="Read description aloud again"
                 title="Read aloud"
               >
@@ -404,7 +427,7 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
                     </div>
                     <button
                       className="btn btn-ghost btn-sm btn-icon-only"
-                      onClick={() => ttsSpeak && ttsSpeak(result.description)}
+                      onClick={() => result && ttsSpeak && ttsSpeak(buildNarration(result, language), language)}
                       aria-label="Read description aloud"
                     >
                       <Volume2 size={16} />
