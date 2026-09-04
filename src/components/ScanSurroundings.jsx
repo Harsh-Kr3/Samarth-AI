@@ -40,7 +40,12 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
       let stream = null;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: {
+          facingMode: { ideal: 'environment' },
+          aspectRatio: { ideal: 3 / 4 },
+          width: { ideal: 720 },
+          height: { ideal: 960 },
+        },
           audio: false,
         });
       } catch (err) {
@@ -211,25 +216,17 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
       </div>
 
       <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: capturedImage || result ? '1fr 1fr' : '1fr',
-          gap: 24,
-        }}
-      >
-        {/* Camera / Captured image display */}
-        <div>
-          <div
-            className="camera-wrap"
-            style={{
-              position: 'relative',
-              width: '100%',
-              minHeight: '380px',
-              borderRadius: '16px',
-              overflow: 'hidden',
-              background: '#070b19',
-            }}
-          >
+  style={{
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
+    gap: 12,
+  }}
+>
+  {/* Dynamic Camera View: 4:3 Live, compact banner when captured */}
+  <div className={capturedImage ? 'camera-wrap-compact' : 'camera-wrap-live'}>
             {/* Live video feed */}
             <video
               ref={videoRef}
@@ -254,7 +251,6 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
                 style={{
                   width: '100%',
                   height: '100%',
-                  minHeight: '380px',
                   objectFit: 'cover',
                   display: 'block',
                 }}
@@ -496,7 +492,6 @@ export default function ScanSurroundings({ onBack, appState, ttsSpeak }) {
             )}
           </div>
         )}
-      </div>
     </div>
   );
 }
