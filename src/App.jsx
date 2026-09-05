@@ -12,12 +12,17 @@ import './index.css';
 
 export default function App() {
   const [screen, setScreen] = useState('home');
+  const [screenProps, setScreenProps] = useState({});
   const [language, setLanguage] = useState(() => localStorage.getItem('samarth_lang') || 'en-IN');
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('samarth_key') || '');
   const [demoMode, setDemoMode] = useState(() => !localStorage.getItem('samarth_key'));
   const [voiceEnabled, setVoiceEnabled] = useState(true);
 
-  const nav = useCallback((s) => setScreen(s), []);
+  // Accept optional screen props (such as { autoCapture: true })
+  const nav = useCallback((s, props = {}) => {
+    setScreen(s);
+    setScreenProps(props);
+  }, []);
 
   const ttsSpeak = useCallback((text, langOverride) => {
     if (!voiceEnabled) return;
@@ -44,7 +49,7 @@ export default function App() {
     setDemoMode(d => !d);
   }, []);
 
-  // Initialize Desktop Voice Wake Assistant
+  // Initialize Desktop/Mobile Voice Wake Engine
   const { wakeState, isMicReady, startListening } = useVoiceWakeAssistant({
     onNavigate: nav,
     currentLanguage: language,
@@ -151,16 +156,19 @@ export default function App() {
 
       <div aria-live="polite" aria-atomic="true" className="sr-only" id="live-region" />
 
-      <Navbar
-        onHome={() => nav('home')}
-        language={language}
-        voiceEnabled={voiceEnabled}
-        onToggleVoice={() => setVoiceEnabled(v => !v)}
-        demoMode={demoMode}
-        onToggleDemo={toggleDemoMode}
-        apiKey={apiKey}
-        onApiKeyChange={handleApiKeyChange}
-      />
+      {/* Show Navbar on sub-screens only */}
+      {screen !== 'home' && (
+        <Navbar
+          onHome={() => nav('home')}
+          language={language}
+          voiceEnabled={voiceEnabled}
+          onToggleVoice={() => setVoiceEnabled(v => !v)}
+          demoMode={demoMode}
+          onToggleDemo={toggleDemoMode}
+          apiKey={apiKey}
+          onApiKeyChange={handleApiKeyChange}
+        />
+      )}
 
       <main id="main-content" className="main-content" role="main">
         {screen === 'home' && (
@@ -177,6 +185,7 @@ export default function App() {
             onBack={() => nav('home')}
             appState={appState}
             ttsSpeak={ttsSpeak}
+            autoCapture={Boolean(screenProps.autoCapture)}
           />
         )}
         {screen === 'read' && (

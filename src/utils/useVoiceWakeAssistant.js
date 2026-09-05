@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
 export function useVoiceWakeAssistant({ 
   onNavigate, 
@@ -14,7 +14,7 @@ export function useVoiceWakeAssistant({
   const isCommandModeRef = useRef(false);
   const timerRef = useRef(null);
 
-  // Audio output
+  // Audio feedback helper
   const respond = useCallback((text) => {
     console.log('[SAMARTH AI Speaks]:', text);
     if (ttsSpeak) {
@@ -30,11 +30,11 @@ export function useVoiceWakeAssistant({
   // Execute recognized actions
   const executeCommand = useCallback((phrase) => {
     const text = phrase.toLowerCase().trim();
-    console.log('[Command Detected]:', text);
+    console.log('[SAMARTH Command Detected]:', text);
 
-    // 1. Language switching
+    // 1. Language Switching Commands
     if (text.includes('english')) {
-      onLanguageChange('en');
+      onLanguageChange('en-IN');
       respond('Language changed to English');
       return true;
     }
@@ -66,25 +66,31 @@ export function useVoiceWakeAssistant({
 
     // 2. Navigation Actions
     if (text.includes('scan') || text.includes('surrounding') || text.includes('camera')) {
-      respond(currentLanguage === 'hi' ? 'स्कैन शुरू कर रहे हैं' : 'Opening Scan Surroundings');
-      onNavigate('scan');
+      respond(currentLanguage === 'hi' 
+        ? 'स्कैन शुरू कर रहे हैं, ढाई सेकंड में फोटो खींची जाएगी' 
+        : 'Opening Scan Surroundings. Capturing automatically in 2.5 seconds.');
+      onNavigate('scan', { autoCapture: true });
       return true;
     }
+
     if (text.includes('read') || text.includes('text') || text.includes('document') || text.includes('book')) {
       respond(currentLanguage === 'hi' ? 'टेक्स्ट रीडर खोला जा रहा है' : 'Opening Read Text');
       onNavigate('read');
       return true;
     }
+
     if (text.includes('voice') || text.includes('assistant') || text.includes('talk')) {
       respond('Opening Voice Assistant');
       onNavigate('voice');
       return true;
     }
+
     if (text.includes('language') || text.includes('setting')) {
       respond('Opening Language Settings');
       onNavigate('language');
       return true;
     }
+
     if (text.includes('home') || text.includes('back')) {
       respond('Going back to Home');
       onNavigate('home');
@@ -94,7 +100,7 @@ export function useVoiceWakeAssistant({
     return false;
   }, [onNavigate, onLanguageChange, respond, currentLanguage]);
 
-  // Wake word checker
+  // Robust phonetic match for wake phrase on varied desktop engines
   const matchesWakeWord = (str) => {
     const s = str.toLowerCase();
     return (
@@ -111,7 +117,7 @@ export function useVoiceWakeAssistant({
   const startListening = useCallback(async () => {
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
-      alert('Please test in Google Chrome or Microsoft Edge for Speech Recognition support.');
+      alert('Please use Google Chrome or Microsoft Edge for Speech Recognition support.');
       return;
     }
 
@@ -121,7 +127,7 @@ export function useVoiceWakeAssistant({
         stream.getTracks().forEach((track) => track.stop());
       }
     } catch (err) {
-      console.warn('Microphone permission request:', err);
+      console.warn('Microphone stream permission:', err);
     }
 
     if (recognitionRef.current) {
@@ -155,6 +161,7 @@ export function useVoiceWakeAssistant({
 
       if (!isCommandModeRef.current) {
         if (matchesWakeWord(heard)) {
+          // Check if command was spoken together in one sentence
           const clean = heard
             .replace(/samarth i need help|smart i need help|summer i need help|samarth help|hey samarth|samarth|samart/gi, '')
             .trim();
@@ -164,6 +171,7 @@ export function useVoiceWakeAssistant({
             return;
           }
 
+          // Trigger command listening mode
           isCommandModeRef.current = true;
           setWakeState('LISTENING_COMMAND');
           respond('Sure, ask anything');
@@ -175,6 +183,7 @@ export function useVoiceWakeAssistant({
           }, 8000);
         }
       } else {
+        // In active command mode
         if (timerRef.current) clearTimeout(timerRef.current);
         isCommandModeRef.current = false;
         setWakeState('IDLE');
@@ -193,6 +202,7 @@ export function useVoiceWakeAssistant({
     };
 
     recog.onend = () => {
+      // Loop recognition so it stays permanently awake
       setTimeout(() => {
         try { recog.start(); } catch (_) {}
       }, 400);
