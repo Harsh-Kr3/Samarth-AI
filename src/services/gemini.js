@@ -220,3 +220,19 @@ export function getDemoOCRResponse(language = 'en') {
   }
   return 'DEMO OCR RESULT: Samarth AI visual assistant for the visually impaired. All systems functioning normally.';
 }
+/**
+ * Voice Assistant Conversational Chat (alias for askAssistant)
+ */
+export async function chatWithAssistant(prompt, language = 'en', customKey = '') {
+  return askAssistant(prompt, language, customKey);
+}
+
+/**
+ * Demo fallback response for VoiceAssistant
+ */
+export function getDemoChatResponse(prompt = '', language = 'en') {
+  if (language?.startsWith('hi')) {
+    return 'मैं समर्थ एआई हूँ। मैं आपके परिवेश को देखने, टेक्स्ट पढ़ने और आपकी सहायता करने के लिए तैयार हूँ।';
+  }
+  return 'I am Samarth AI, your intelligent visual assistant. I can help you scan surroundings, read text, and navigate your environment.';
+}
