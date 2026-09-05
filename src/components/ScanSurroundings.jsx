@@ -16,7 +16,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState('');
   const [error, setError] = useState(null);
-  const [facingMode, setFacingMode] = useState('environment'); // 'environment' | 'user'
+  const [facingMode, setFacingMode] = useState('environment');
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
   const [countdown, setCountdown] = useState(autoCapture ? 2.5 : null);
@@ -28,7 +28,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
   const streamRef = useRef(null);
   const hasTriggeredAutoCapture = useRef(false);
 
-  // Stop camera tracks cleanly
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -36,7 +35,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     }
   }, []);
 
-  // Initialize camera
   const startCamera = useCallback(async () => {
     stopCamera();
     setError(null);
@@ -61,13 +59,11 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         };
       }
 
-      // Check if hardware torch/flashlight is supported
       const track = stream.getVideoTracks()[0];
       const capabilities = track.getCapabilities ? track.getCapabilities() : {};
       setHasTorch(Boolean(capabilities.torch));
     } catch (err) {
-      console.warn('Standard camera constraint failed, trying fallback...', err);
-      // Desktop / legacy fallback without facingMode constraints
+      console.warn('Primary camera stream constraint failed, falling back...', err);
       try {
         const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         streamRef.current = fallbackStream;
@@ -76,8 +72,8 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
           videoRef.current.play().catch((e) => console.warn('Fallback play error:', e));
         }
       } catch (fallbackErr) {
-        console.error('Fatal Camera Access Error:', fallbackErr);
-        setError('Camera blocked or unavailable. Please grant camera permission in your browser.');
+        console.error('Camera access denied:', fallbackErr);
+        setError('Camera blocked or unavailable. Please enable permissions.');
       }
     }
   }, [facingMode, stopCamera]);
@@ -92,7 +88,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     };
   }, [startCamera, stopCamera]);
 
-  // Toggle Flashlight / Torch if hardware supported
   const toggleTorch = async () => {
     if (!streamRef.current) return;
     const track = streamRef.current.getVideoTracks()[0];
@@ -102,31 +97,39 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         await track.applyConstraints({ advanced: [{ torch: nextState }] });
         setTorchOn(nextState);
       } catch (e) {
-        console.warn('Torch constraint error:', e);
+        console.warn('Torch control error:', e);
       }
     }
   };
 
-  // Flip Front / Back Camera
   const toggleCameraFacing = () => {
     setTorchOn(false);
     setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
 
-  // Speak handler with play/stop state tracking
+  // Safe speak handler
   const handleSpeak = useCallback((textToSpeak) => {
     if (!textToSpeak) return;
+
+    let safeText = '';
+    if (typeof textToSpeak === 'string') {
+      safeText = textToSpeak;
+    } else if (typeof textToSpeak === 'object') {
+      safeText = textToSpeak.description || textToSpeak.text || JSON.stringify(textToSpeak);
+    } else {
+      safeText = String(textToSpeak);
+    }
+
     setIsPlayingAudio(true);
 
     if (ttsSpeak) {
-      ttsSpeak(textToSpeak, appState.language);
-      // Estimate playback completion
-      const wordCount = textToSpeak.split(' ').length;
-      setTimeout(() => setIsPlayingAudio(false), Math.max(2500, wordCount * 380));
+      ttsSpeak(safeText, appState.language);
+      const words = safeText.split(/\s+/).filter(Boolean).length;
+      setTimeout(() => setIsPlayingAudio(false), Math.max(2500, words * 380));
     } else if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(textToSpeak);
-      utterance.lang = appState.language === 'hi' ? 'hi-IN' : 'en-US';
+      const utterance = new SpeechSynthesisUtterance(safeText);
+      utterance.lang = appState.language?.startsWith('hi') ? 'hi-IN' : 'en-US';
       utterance.onend = () => setIsPlayingAudio(false);
       utterance.onerror = () => setIsPlayingAudio(false);
       window.speechSynthesis.speak(utterance);
@@ -140,17 +143,16 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     setIsPlayingAudio(false);
   };
 
-  // Capture Image & Analyze Scene
+  // Shutter capture & Vision analysis
   const handleCapture = useCallback(async () => {
     if (!videoRef.current || loading) return;
 
     const video = videoRef.current;
     if (!video.videoWidth || !video.videoHeight) {
-      console.warn('Video feed not ready for capture yet.');
+      console.warn('Video not ready yet');
       return;
     }
 
-    // Shutter animation
     setShutterFlash(true);
     setTimeout(() => setShutterFlash(false), 200);
 
@@ -166,17 +168,27 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     setError(null);
 
     try {
-      const description = await analyzeScene(
+      const response = await analyzeScene(
         base64Image,
         appState.language || 'en-IN',
         appState.apiKey || ''
       );
 
-      setResult(description);
-      handleSpeak(description);
+      // Safe string extraction from API result
+      let safeDescription = '';
+      if (typeof response === 'string') {
+        safeDescription = response;
+      } else if (response && typeof response === 'object') {
+        safeDescription = response.description || response.text || JSON.stringify(response);
+      } else {
+        safeDescription = 'Scene analyzed successfully.';
+      }
+
+      setResult(safeDescription);
+      handleSpeak(safeDescription);
     } catch (err) {
-      console.error('Analysis error:', err);
-      const errPrompt = appState.language === 'hi'
+      console.error('Vision analysis error:', err);
+      const errPrompt = appState.language?.startsWith('hi')
         ? 'दृश्य का विश्लेषण करने में असमर्थ। कृपया पुनः प्रयास करें।'
         : 'Failed to analyze surroundings. Please try again.';
       setError(errPrompt);
@@ -186,14 +198,13 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     }
   }, [loading, appState.language, appState.apiKey, handleSpeak]);
 
-  // Hands-free 2.5s Auto-Capture timer
+  // 2.5s Auto-Capture mechanism
   useEffect(() => {
     if (!autoCapture || hasTriggeredAutoCapture.current) return;
     hasTriggeredAutoCapture.current = true;
 
-    // Verbal heads-up
     handleSpeak(
-      appState.language === 'hi' 
+      appState.language?.startsWith('hi') 
         ? 'कैमरा तैयार हो रहा है, ढाई सेकंड में फोटो ली जाएगी' 
         : 'Camera ready. Capturing automatically in 2.5 seconds.'
     );
@@ -219,7 +230,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     };
   }, [autoCapture, handleCapture, handleSpeak, appState.language]);
 
-  // Reset to take another scan
   const handleResetScan = () => {
     setResult('');
     setError(null);
@@ -242,15 +252,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
       overflow: 'hidden',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
-      {/* Background glow */}
-      <div style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        background: 'radial-gradient(ellipse 80% 40% at 50% 5%, rgba(6, 182, 212, 0.12) 0%, transparent 60%)'
-      }} />
-
-      {/* TOP HEADER */}
       <header style={{
         position: 'relative',
         zIndex: 10,
@@ -283,7 +284,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         </button>
 
         <div style={{ textAlign: 'center' }}>
-          <h1 style={{ fontSize: '15px', fontWeight: 800, margin: 0, letterSpacing: '0.3px' }}>
+          <h1 style={{ fontSize: '15px', fontWeight: 800, margin: 0 }}>
             Scan Surroundings
           </h1>
           <span style={{ fontSize: '11px', color: '#94a3b8' }}>
@@ -291,7 +292,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
           </span>
         </div>
 
-        {/* Action icons right (Torch & Camera Switch) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {hasTorch && (
             <button
@@ -337,7 +337,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         </div>
       </header>
 
-      {/* CAMERA VIEWFINDER & OVERLAYS */}
+      {/* Camera Viewport */}
       <main style={{
         position: 'relative',
         flex: 1,
@@ -348,10 +348,8 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         background: '#000000',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 12px 36px rgba(0, 0, 0, 0.6)'
+        justifyContent: 'center'
       }}>
-        {/* Live Video Feed */}
         <video
           ref={videoRef}
           autoPlay
@@ -361,40 +359,20 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         />
         <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-        {/* Shutter Flash Animation */}
         {shutterFlash && (
           <div style={{
             position: 'absolute',
             inset: 0,
             background: '#ffffff',
-            zIndex: 40,
-            animation: 'flash 0.2s ease-out'
+            zIndex: 40
           }} />
         )}
 
-        {/* Visual Target Reticle */}
-        {!loading && !result && (
-          <div style={{
-            position: 'absolute',
-            width: '210px',
-            height: '210px',
-            border: '2px dashed rgba(0, 219, 233, 0.45)',
-            borderRadius: '24px',
-            pointerEvents: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#00dbe9' }} />
-          </div>
-        )}
-
-        {/* 2.5s Hands-Free Countdown Overlay */}
         {countdown !== null && (
           <div style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(4, 7, 17, 0.6)',
+            background: 'rgba(4, 7, 17, 0.65)',
             backdropFilter: 'blur(4px)',
             display: 'flex',
             flexDirection: 'column',
@@ -418,13 +396,12 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
             }}>
               {countdown}s
             </div>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#38bdf8', letterSpacing: '0.2px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: '#38bdf8' }}>
               Auto-capturing photo...
             </span>
           </div>
         )}
 
-        {/* AI Processing Overlay */}
         {loading && (
           <div style={{
             position: 'absolute',
@@ -439,8 +416,8 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
             zIndex: 35
           }}>
             <div style={{
-              width: '54px',
-              height: '54px',
+              width: '50px',
+              height: '50px',
               borderRadius: '50%',
               border: '3px solid rgba(0, 219, 233, 0.2)',
               borderTopColor: '#00dbe9',
@@ -452,7 +429,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
           </div>
         )}
 
-        {/* Camera Permission / Device Error */}
         {error && (
           <div style={{
             position: 'absolute',
@@ -490,7 +466,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         )}
       </main>
 
-      {/* BOTTOM CONTROL DOCK / OUTPUT DRAWER */}
+      {/* Bottom Output / Shutter Area */}
       <footer style={{
         position: 'relative',
         zIndex: 20,
@@ -499,7 +475,6 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         flexDirection: 'column',
         gap: 12
       }}>
-        {/* Results Card (Displays only when vision result is ready) */}
         {result ? (
           <div style={{
             background: 'rgba(11, 19, 38, 0.92)',
@@ -514,14 +489,10 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
             gap: 8
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#00dbe9' }} />
-                <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#00dbe9', fontWeight: 800 }}>
-                  Surroundings Identified
-                </span>
-              </div>
+              <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#00dbe9', fontWeight: 800 }}>
+                Surroundings Identified
+              </span>
 
-              {/* TTS Play/Stop Button */}
               <button
                 type="button"
                 onClick={() => (isPlayingAudio ? stopAudio() : handleSpeak(result))}
@@ -544,7 +515,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
               </button>
             </div>
 
-            <div style={{ overflowY: 'auto', paddingRight: '4px' }}>
+            <div style={{ overflowY: 'auto' }}>
               <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.45, color: '#f8fafc' }}>
                 {result}
               </p>
@@ -552,15 +523,12 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
           </div>
         ) : null}
 
-        {/* Bottom Shutter & Reset Controls */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 24,
           position: 'relative'
         }}>
-          {/* If a result is active, show the "Scan Again" button */}
           {result && (
             <button
               type="button"
@@ -586,35 +554,11 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
             </button>
           )}
 
-          {/* Main Shutter Button */}
           <button
             type="button"
             onClick={handleCapture}
             disabled={loading}
             style={{
-              position: 'relative',
-              width: '68px',
-              height: '68px',
-              borderRadius: '50%',
-              border: 'none',
-              background: 'transparent',
-              padding: 0,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-            aria-label="Capture Surroundings"
-          >
-            {/* Pulsing ring */}
-            <div style={{
-              position: 'absolute',
-              inset: -8,
-              borderRadius: '50%',
-              background: 'radial-gradient(circle, rgba(0, 219, 233, 0.4) 0%, transparent 70%)',
-              pointerEvents: 'none'
-            }} />
-            <div style={{
               width: '64px',
               height: '64px',
               borderRadius: '50%',
@@ -625,10 +569,11 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
               alignItems: 'center',
               justifyContent: 'center',
               color: '#ffffff',
-              transition: 'transform 0.15s ease'
-            }}>
-              <Camera size={26} strokeWidth={2.3} />
-            </div>
+              cursor: loading ? 'not-allowed' : 'pointer'
+            }}
+            aria-label="Capture Surroundings"
+          >
+            <Camera size={26} />
           </button>
         </div>
       </footer>

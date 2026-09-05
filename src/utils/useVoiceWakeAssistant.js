@@ -12,33 +12,36 @@ export function useVoiceWakeAssistant({
 
   const recognitionRef = useRef(null);
   const isCommandModeRef = useRef(false);
-  const timerRef = useRef(null);
-  const lastProcessedTextRef = useRef('');
+  const isManuallyStoppedRef = useRef(false);
+  const isStartingRef = useRef(false);
+  const restartTimerRef = useRef(null);
+  const commandTimeoutRef = useRef(null);
+  const lastProcessedRef = useRef('');
 
-  // Phonetic sanitizer: ensures browser voices pronounce "Samarth" smoothly
+  // Audio feedback helper with phonetic normalization
   const speakNatural = useCallback((text) => {
-    // Replace all uppercase SAMARTH with spoken title-case Samarth
-    const smoothed = text.replace(/SAMARTH AI/gi, 'Samarth AI').replace(/SAMARTH/gi, 'Samarth');
-    console.log('[Samarth AI Output]:', smoothed);
+    const smoothed = text
+      .replace(/SAMARTH AI/gi, 'Samarth AI')
+      .replace(/SAMARTH/gi, 'Samarth');
+    console.log('[Samarth AI Speaks]:', smoothed);
 
     if (ttsSpeak) {
       ttsSpeak(smoothed, currentLanguage);
     } else if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(smoothed);
-      utterance.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-IN';
+      utterance.lang = currentLanguage?.startsWith('hi') ? 'hi-IN' : 'en-IN';
       utterance.rate = 1.0;
-      utterance.pitch = 1.0;
       window.speechSynthesis.speak(utterance);
     }
   }, [ttsSpeak, currentLanguage]);
 
-  // Execute Action Commands
+  // Execute recognized actions
   const executeCommand = useCallback((rawPhrase) => {
     const text = rawPhrase.toLowerCase().trim();
-    console.log('[Samarth Parsing Command]:', text);
+    console.log('[Samarth Executing Action]:', text);
 
-    // 1. Language Switching
+    // 1. Language commands
     if (text.includes('english')) {
       onLanguageChange('en-IN');
       speakNatural('Language switched to English');
@@ -70,39 +73,34 @@ export function useVoiceWakeAssistant({
       return true;
     }
 
-    // 2. Navigation Actions
-    // Scan Surroundings + 2.5s Auto-Capture
-    if (text.includes('scan') || text.includes('surrounding') || text.includes('surroundings') || text.includes('camera') || text.includes('capture')) {
-      speakNatural(currentLanguage === 'hi' 
+    // 2. Navigation & Feature actions
+    if (text.includes('scan') || text.includes('surrounding') || text.includes('camera') || text.includes('capture')) {
+      speakNatural(currentLanguage?.startsWith('hi') 
         ? 'स्कैन शुरू कर रहे हैं, ढाई सेकंड में फोटो खींची जाएगी' 
         : 'Opening Scan Surroundings. Capturing automatically in 2.5 seconds.');
       onNavigate('scan', { autoCapture: true });
       return true;
     }
 
-    // Read Text / Document OCR
-    if (text.includes('read') || text.includes('text') || text.includes('document') || text.includes('book') || text.includes('paper')) {
-      speakNatural(currentLanguage === 'hi' ? 'टेक्स्ट रीडर खोला जा रहा है' : 'Opening Read Text');
+    if (text.includes('read') || text.includes('text') || text.includes('document') || text.includes('book') || text.includes('ocr')) {
+      speakNatural(currentLanguage?.startsWith('hi') ? 'टेक्स्ट रीडर खोला जा रहा है' : 'Opening Read Text');
       onNavigate('read');
       return true;
     }
 
-    // Voice Assistant Screen
-    if (text.includes('voice') || text.includes('assistant') || text.includes('talk') || text.includes('chat') || text.includes('ask')) {
+    if (text.includes('voice') || text.includes('assistant') || text.includes('talk') || text.includes('chat')) {
       speakNatural('Opening Voice Assistant');
       onNavigate('voice');
       return true;
     }
 
-    // Language Settings Screen
-    if (text.includes('language') || text.includes('setting') || text.includes('settings')) {
+    if (text.includes('language') || text.includes('setting')) {
       speakNatural('Opening Language Settings');
       onNavigate('language');
       return true;
     }
 
-    // Home / Back
-    if (text.includes('home') || text.includes('back') || text.includes('main screen') || text.includes('dashboard')) {
+    if (text.includes('home') || text.includes('back') || text.includes('main')) {
       speakNatural('Going back to Home');
       onNavigate('home');
       return true;
@@ -111,29 +109,45 @@ export function useVoiceWakeAssistant({
     return false;
   }, [onNavigate, onLanguageChange, speakNatural, currentLanguage]);
 
-  // Wake word detector (accommodating Indian speech accents and system phonetics)
-  const containsWakeWord = (str) => {
+  // Phonetic wake-phrase evaluation
+  const isWakePhrase = (str) => {
     const s = str.toLowerCase();
     return (
       s.includes('samarth i need help') ||
       s.includes('samarth help') ||
-      s.includes('hey samarth') ||
-      s.includes('ok samarth') ||
-      s.includes('samarth ai') ||
       s.includes('samarth') ||
       s.includes('samart') ||
       s.includes('smart i need help') ||
       s.includes('summer i need help') ||
+      s.includes('hey samarth') ||
+      s.includes('ok samarth') ||
       s.includes('समर्थ')
     );
   };
 
   const stripWakeWords = (str) => {
     return str
-      .replace(/samarth i need help|smart i need help|summer i need help|samarth help|hey samarth|ok samarth|samarth ai|samarth|samart|समर्थ/gi, '')
-      .replace(/please|can you|could you|i want to/gi, '')
+      .replace(/samarth i need help|smart i need help|summer i need help|samarth help|hey samarth|ok samarth|samarth|samart|समर्थ/gi, '')
+      .replace(/please|can you|could you/gi, '')
       .trim();
   };
+
+  // Safe restart scheduler that prevents loop thrashing
+  const scheduleRestart = useCallback(() => {
+    if (isManuallyStoppedRef.current) return;
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+
+    restartTimerRef.current = setTimeout(() => {
+      if (recognitionRef.current && !isManuallyStoppedRef.current && !isStartingRef.current) {
+        try {
+          isStartingRef.current = true;
+          recognitionRef.current.start();
+        } catch (e) {
+          isStartingRef.current = false;
+        }
+      }
+    }, 600); // Debounce to allow engine cleanup
+  }, []);
 
   const startListening = useCallback(async () => {
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -142,72 +156,80 @@ export function useVoiceWakeAssistant({
       return;
     }
 
-    // Grant audio stream permission explicitly
+    isManuallyStoppedRef.current = false;
+
+    // If an instance already exists, do not re-instantiate
+    if (recognitionRef.current) {
+      try {
+        isStartingRef.current = true;
+        recognitionRef.current.start();
+      } catch (_) {
+        isStartingRef.current = false;
+      }
+      return;
+    }
+
+    // Request desktop mic stream explicitly
     try {
       if (navigator.mediaDevices?.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((track) => track.stop());
       }
     } catch (e) {
-      console.warn('Microphone permission query:', e);
-    }
-
-    if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch (_) {}
+      console.warn('Microphone permission check:', e);
     }
 
     const recog = new SpeechRec();
     recog.continuous = true;
     recog.interimResults = true;
-    recog.maxAlternatives = 3;
-    recog.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-IN';
+    recog.lang = currentLanguage?.startsWith('hi') ? 'hi-IN' : 'en-IN';
 
     recog.onstart = () => {
+      isStartingRef.current = false;
       setIsMicReady(true);
-      console.log('[Samarth AI] Active Microphone Engine Ready.');
+      console.log('[Samarth AI] Steady Microphone Listener Ready.');
     };
 
     recog.onresult = (event) => {
-      let currentTranscript = '';
+      let fullTranscript = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
-        currentTranscript += event.results[i][0].transcript;
+        fullTranscript += event.results[i][0].transcript;
       }
 
-      const heard = currentTranscript.toLowerCase().trim();
-      if (!heard || heard === lastProcessedTextRef.current) return;
+      const heard = fullTranscript.toLowerCase().trim();
+      if (!heard || heard === lastProcessedRef.current) return;
 
+      console.log('[User Spoke]:', heard);
       setHeardText(heard);
 
-      // 1. Check if user is triggering the wake phrase
       if (!isCommandModeRef.current) {
-        if (containsWakeWord(heard)) {
-          lastProcessedTextRef.current = heard;
-          const remainingCommand = stripWakeWords(heard);
+        if (isWakePhrase(heard)) {
+          lastProcessedRef.current = heard;
+          const directCommand = stripWakeWords(heard);
 
-          // If the user spoke wake word + command in one sentence:
-          // e.g. "Samarth I need help scan surroundings"
-          if (remainingCommand.length > 2 && executeCommand(remainingCommand)) {
+          // Combined sentence check: "Samarth I need help scan surroundings"
+          if (directCommand.length > 2 && executeCommand(directCommand)) {
             setWakeState('IDLE');
             return;
           }
 
-          // Otherwise, enter active command mode and reply "Sure, ask anything"
+          // Otherwise activate command mode and reply
           isCommandModeRef.current = true;
           setWakeState('LISTENING_COMMAND');
           speakNatural('Sure, ask anything');
 
-          if (timerRef.current) clearTimeout(timerRef.current);
-          timerRef.current = setTimeout(() => {
+          if (commandTimeoutRef.current) clearTimeout(commandTimeoutRef.current);
+          commandTimeoutRef.current = setTimeout(() => {
             isCommandModeRef.current = false;
             setWakeState('IDLE');
           }, 8000);
         }
       } else {
-        // 2. In active listening mode: parse user command instantly
+        // In active command mode
         const cleanCommand = stripWakeWords(heard);
         if (cleanCommand.length > 2) {
-          lastProcessedTextRef.current = heard;
-          if (timerRef.current) clearTimeout(timerRef.current);
+          lastProcessedRef.current = heard;
+          if (commandTimeoutRef.current) clearTimeout(commandTimeoutRef.current);
           isCommandModeRef.current = false;
           setWakeState('IDLE');
 
@@ -220,25 +242,40 @@ export function useVoiceWakeAssistant({
     };
 
     recog.onerror = (e) => {
-      console.warn('[Speech Recognition Event]:', e.error);
+      isStartingRef.current = false;
+      // Filter out benign browser events (aborted, no-speech) to avoid error loop logging
       if (e.error === 'not-allowed') {
         setIsMicReady(false);
+        isManuallyStoppedRef.current = true;
       }
     };
 
     recog.onend = () => {
-      // Loop recognition so it never sleeps
-      setTimeout(() => {
-        try { recog.start(); } catch (_) {}
-      }, 300);
+      isStartingRef.current = false;
+      scheduleRestart();
     };
 
     try {
+      isStartingRef.current = true;
       recog.start();
       recognitionRef.current = recog;
       setIsMicReady(true);
-    } catch (_) {}
-  }, [currentLanguage, executeCommand, speakNatural]);
+    } catch (_) {
+      isStartingRef.current = false;
+    }
+  }, [currentLanguage, executeCommand, scheduleRestart, speakNatural]);
+
+  // Teardown cleanup
+  useEffect(() => {
+    return () => {
+      isManuallyStoppedRef.current = true;
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      if (commandTimeoutRef.current) clearTimeout(commandTimeoutRef.current);
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+      }
+    };
+  }, []);
 
   return { wakeState, isMicReady, startListening, heardText };
 }
