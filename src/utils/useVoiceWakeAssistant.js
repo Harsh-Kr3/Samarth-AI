@@ -1,177 +1,209 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback } from 'react';
 
 export function useVoiceWakeAssistant({ 
-  currentScreen, 
   onNavigate, 
   currentLanguage, 
   onLanguageChange, 
   ttsSpeak 
 }) {
   const [wakeState, setWakeState] = useState('IDLE'); // 'IDLE' | 'LISTENING_COMMAND'
-  const [transcript, setTranscript] = useState('');
+  const [isMicReady, setIsMicReady] = useState(false);
+  const [heardText, setHeardText] = useState('');
+
   const recognitionRef = useRef(null);
   const isCommandModeRef = useRef(false);
-  const commandTimeoutRef = useRef(null);
+  const timerRef = useRef(null);
 
-  // Helper to speak feedback
+  // Audio output
   const respond = useCallback((text) => {
+    console.log('[SAMARTH AI Speaks]:', text);
     if (ttsSpeak) {
       ttsSpeak(text, currentLanguage);
     } else if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-IN';
+      utterance.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-US';
       window.speechSynthesis.speak(utterance);
     }
   }, [ttsSpeak, currentLanguage]);
 
-  // Execute commands parsed from user voice
-  const handleCommand = useCallback((commandText) => {
-    const text = commandText.toLowerCase().trim();
+  // Execute recognized actions
+  const executeCommand = useCallback((phrase) => {
+    const text = phrase.toLowerCase().trim();
+    console.log('[Command Detected]:', text);
 
-    // 1. Language Changing Commands
+    // 1. Language switching
     if (text.includes('english')) {
       onLanguageChange('en');
       respond('Language changed to English');
-      return;
+      return true;
     }
     if (text.includes('hindi') || text.includes('हिंदी')) {
       onLanguageChange('hi');
       respond('भाषा बदलकर हिंदी कर दी गई है');
-      return;
+      return true;
     }
     if (text.includes('marathi') || text.includes('मराठी')) {
       onLanguageChange('mr');
       respond('भाषा मराठी केली आहे');
-      return;
+      return true;
     }
     if (text.includes('telugu') || text.includes('తెలుగు')) {
       onLanguageChange('te');
       respond('భాష తెలుగులోకి మార్చబడింది');
-      return;
+      return true;
     }
     if (text.includes('bengali') || text.includes('bangla') || text.includes('বাংলা')) {
       onLanguageChange('bn');
       respond('ভাষা বাংলায় পরিবর্তন করা হয়েছে');
-      return;
+      return true;
     }
     if (text.includes('tamil') || text.includes('தமிழ்')) {
       onLanguageChange('ta');
       respond('மொழி தமிழாக மாற்றப்பட்டது');
-      return;
+      return true;
     }
 
     // 2. Navigation Actions
-    if (text.includes('scan') || text.includes('surrounding') || text.includes('surroundings')) {
+    if (text.includes('scan') || text.includes('surrounding') || text.includes('camera')) {
       respond(currentLanguage === 'hi' ? 'स्कैन शुरू कर रहे हैं' : 'Opening Scan Surroundings');
       onNavigate('scan');
-      return;
+      return true;
     }
-
     if (text.includes('read') || text.includes('text') || text.includes('document') || text.includes('book')) {
       respond(currentLanguage === 'hi' ? 'टेक्स्ट रीडर खोला जा रहा है' : 'Opening Read Text');
       onNavigate('read');
-      return;
+      return true;
     }
-
-    if (text.includes('language') || text.includes('settings')) {
-      respond('Opening Language Settings');
-      onNavigate('language');
-      return;
-    }
-
     if (text.includes('voice') || text.includes('assistant') || text.includes('talk')) {
       respond('Opening Voice Assistant');
       onNavigate('voice');
-      return;
+      return true;
     }
-
-    if (text.includes('home') || text.includes('back') || text.includes('main')) {
+    if (text.includes('language') || text.includes('setting')) {
+      respond('Opening Language Settings');
+      onNavigate('language');
+      return true;
+    }
+    if (text.includes('home') || text.includes('back')) {
       respond('Going back to Home');
       onNavigate('home');
-      return;
+      return true;
     }
 
-    // Fallback if command unrecognized
-    respond("I didn't catch that. You can say scan surroundings, read text, or change language.");
+    return false;
   }, [onNavigate, onLanguageChange, respond, currentLanguage]);
 
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      console.warn('SpeechRecognition API not supported on this browser.');
+  // Wake word checker
+  const matchesWakeWord = (str) => {
+    const s = str.toLowerCase();
+    return (
+      s.includes('samarth i need help') ||
+      s.includes('samarth help') ||
+      s.includes('samarth') ||
+      s.includes('samart') ||
+      s.includes('smart i need help') ||
+      s.includes('summer i need help') ||
+      s.includes('hey samarth')
+    );
+  };
+
+  const startListening = useCallback(async () => {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      alert('Please test in Google Chrome or Microsoft Edge for Speech Recognition support.');
       return;
     }
 
-    const recog = new SpeechRecognition();
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    } catch (err) {
+      console.warn('Microphone permission request:', err);
+    }
+
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch (_) {}
+    }
+
+    const recog = new SpeechRec();
     recog.continuous = true;
     recog.interimResults = true;
     recog.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-IN';
 
+    recog.onstart = () => {
+      setIsMicReady(true);
+      console.log('[SAMARTH AI] Mic is ACTIVE & Listening...');
+    };
+
     recog.onresult = (event) => {
-      let finalStr = '';
+      let interim = '';
+      let final = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalStr += event.results[i][0].transcript;
-        }
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += t;
+        else interim += t;
       }
 
-      const heard = finalStr.toLowerCase().trim();
+      const heard = (final || interim).toLowerCase().trim();
       if (!heard) return;
 
-      setTranscript(heard);
+      setHeardText(heard);
+      console.log('[Heard]:', heard);
 
-      // Check if we are waiting for Wake Word
       if (!isCommandModeRef.current) {
-        if (heard.includes('samarth i need help') || heard.includes('samarth help') || heard.includes('hey samarth') || heard.includes('samarth')) {
-          // Wake Word Triggered!
+        if (matchesWakeWord(heard)) {
+          const clean = heard
+            .replace(/samarth i need help|smart i need help|summer i need help|samarth help|hey samarth|samarth|samart/gi, '')
+            .trim();
+
+          if (clean.length > 2 && executeCommand(clean)) {
+            setWakeState('IDLE');
+            return;
+          }
+
           isCommandModeRef.current = true;
           setWakeState('LISTENING_COMMAND');
-          
           respond('Sure, ask anything');
 
-          // Give user 8 seconds to deliver the action command
-          if (commandTimeoutRef.current) clearTimeout(commandTimeoutRef.current);
-          commandTimeoutRef.current = setTimeout(() => {
+          if (timerRef.current) clearTimeout(timerRef.current);
+          timerRef.current = setTimeout(() => {
             isCommandModeRef.current = false;
             setWakeState('IDLE');
           }, 8000);
         }
       } else {
-        // We are in Command Mode, execute user intent
-        clearTimeout(commandTimeoutRef.current);
+        if (timerRef.current) clearTimeout(timerRef.current);
         isCommandModeRef.current = false;
         setWakeState('IDLE');
-        handleCommand(heard);
+        const handled = executeCommand(heard);
+        if (!handled) {
+          respond("I didn't catch that. You can say scan surroundings, read text, or change language.");
+        }
       }
     };
 
     recog.onerror = (e) => {
-      // Automatic restart on network or silent timeouts
-      if (e.error !== 'not-allowed') {
-        try { recog.start(); } catch (_) {}
+      console.warn('[Speech Error]:', e.error);
+      if (e.error === 'not-allowed') {
+        setIsMicReady(false);
       }
     };
 
     recog.onend = () => {
-      // Keep recognition persistent across the app
-      try { recog.start(); } catch (_) {}
+      setTimeout(() => {
+        try { recog.start(); } catch (_) {}
+      }, 400);
     };
 
     try {
       recog.start();
+      recognitionRef.current = recog;
+      setIsMicReady(true);
     } catch (_) {}
+  }, [currentLanguage, executeCommand, respond]);
 
-    recognitionRef.current = recog;
-
-    return () => {
-      if (commandTimeoutRef.current) clearTimeout(commandTimeoutRef.current);
-      if (recognitionRef.current) {
-        recognitionRef.current.onend = null;
-        try { recognitionRef.current.stop(); } catch (_) {}
-      }
-    };
-  }, [currentLanguage, handleCommand, respond]);
-
-  return { wakeState, transcript };
+  return { wakeState, isMicReady, startListening, heardText };
 }
