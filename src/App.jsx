@@ -18,7 +18,6 @@ export default function App() {
   const [demoMode, setDemoMode] = useState(() => !localStorage.getItem('samarth_key'));
   const [voiceEnabled, setVoiceEnabled] = useState(true);
 
-  // Accept optional screen props (such as { autoCapture: true })
   const nav = useCallback((s, props = {}) => {
     setScreen(s);
     setScreenProps(props);
@@ -26,7 +25,10 @@ export default function App() {
 
   const ttsSpeak = useCallback((text, langOverride) => {
     if (!voiceEnabled) return;
-    speak(text, { lang: langOverride || language });
+    const speechFriendlyText = (text || '')
+      .replace(/SAMARTH AI/gi, 'Samarth AI')
+      .replace(/SAMARTH/gi, 'Samarth');
+    speak(speechFriendlyText, { lang: langOverride || language });
   }, [voiceEnabled, language]);
 
   const handleLanguageChange = useCallback((lang) => {
@@ -49,7 +51,7 @@ export default function App() {
     setDemoMode(d => !d);
   }, []);
 
-  // Initialize Desktop/Mobile Voice Wake Engine
+  // Initialize Voice Assistant
   const { wakeState, isMicReady, startListening } = useVoiceWakeAssistant({
     onNavigate: nav,
     currentLanguage: language,
@@ -57,13 +59,34 @@ export default function App() {
     ttsSpeak
   });
 
-  // Welcome greeting
+  // Attempt auto-activation on initial mount
   useEffect(() => {
+    startListening();
+
+    // Browser audio unlock listener for any initial touch/click/keypress
+    const handleFirstInteraction = () => {
+      startListening();
+      window.removeEventListener('click', handleFirstInteraction);
+      window.removeEventListener('keydown', handleFirstInteraction);
+      window.removeEventListener('touchstart', handleFirstInteraction);
+    };
+
+    window.addEventListener('click', handleFirstInteraction);
+    window.addEventListener('keydown', handleFirstInteraction);
+    window.addEventListener('touchstart', handleFirstInteraction);
+
     const greeting = GREETINGS[language] || GREETINGS['en-IN'];
-    const timer = setTimeout(() => ttsSpeak(greeting), 1200);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const timer = setTimeout(() => {
+      ttsSpeak(greeting);
+    }, 1200);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('click', handleFirstInteraction);
+      window.removeEventListener('keydown', handleFirstInteraction);
+      window.removeEventListener('touchstart', handleFirstInteraction);
+    };
+  }, [startListening, language, ttsSpeak]);
 
   const appState = { language, apiKey, demoMode };
 
@@ -71,19 +94,13 @@ export default function App() {
     <div 
       className="app-root" 
       role="application" 
-      aria-label="SAMARTH AI Accessibility Assistant"
-      onClick={() => {
-        if (!isMicReady) startListening();
-      }}
+      aria-label="Samarth AI Accessibility Assistant"
     >
-      {/* Desktop Mic Activation & Status Pill */}
+      {/* Mic Status Indicator / One-click manual activator */}
       {!isMicReady ? (
         <button 
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            startListening();
-          }}
+          onClick={() => startListening()}
           style={{
             position: 'fixed',
             top: 14,
@@ -103,7 +120,7 @@ export default function App() {
             gap: 8
           }}
         >
-          <span>🎙️ Click to Enable Voice Wake</span>
+          <span>🎙️ Tap to Enable Voice Ear</span>
         </button>
       ) : (
         <div 
@@ -112,7 +129,7 @@ export default function App() {
             top: 14,
             right: 18,
             zIndex: 9999,
-            background: 'rgba(6, 78, 59, 0.85)',
+            background: 'rgba(6, 78, 59, 0.9)',
             border: '1px solid #10b981',
             borderRadius: 999,
             padding: '5px 14px',
@@ -125,15 +142,15 @@ export default function App() {
           }}
         >
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
-          <span>Listening for "SAMARTH I need help"</span>
+          <span>Listening: "I need help"</span>
         </div>
       )}
 
-      {/* Floating Active Wake Banner */}
+      {/* Active Listening Indicator */}
       {wakeState === 'LISTENING_COMMAND' && (
         <div style={{
           position: 'fixed',
-          top: 70,
+          top: 68,
           left: '50%',
           transform: 'translateX(-50%)',
           zIndex: 9999,
@@ -156,7 +173,6 @@ export default function App() {
 
       <div aria-live="polite" aria-atomic="true" className="sr-only" id="live-region" />
 
-      {/* Show Navbar on sub-screens only */}
       {screen !== 'home' && (
         <Navbar
           onHome={() => nav('home')}
