@@ -44,46 +44,98 @@ export async function AnalyzeSurroundings(base64Image, language = 'en', customKe
   if (!apiKey) throw new Error('API key is missing.');
 
   const cleanBase64 = base64Image.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
+  const isHindi = language?.startsWith('hi');
 
-  const prompt = language === 'hi'
-    ? 'इस दृश्य का विश्लेषण करें। मुख्य वस्तुओं की पहचान करें, उनकी दिशा (LEFT, CENTER, RIGHT) और कैमरे से अनुमानित दूरी (जैसे "0.5m", "1.2m", "2m") बताएं। केवल शुद्ध JSON उत्तर दें: {"description": "...", "objects": [{"name": "...", "position": "CENTER", "distance": "0.8m"}]}'
-    : 'Analyze this scene for a visually impaired user. Identify key visible objects, their spatial direction (LEFT, CENTER, RIGHT), and their estimated distance from the camera (e.g. "0.5m", "1.2m", "2m"). Respond ONLY in valid JSON: {"description": "...", "objects": [{"name": "...", "position": "CENTER", "distance": "0.8m"}]}';
+  const prompt = isHindi
+    ? `आप दृष्टिबाधित उपयोगकर्ताओं के लिए सहायक एआई हैं। इस दृश्य का संपूर्ण स्थानिक (spatial) विश्लेषण करें।
+       कमरे और समग्र वातावरण का स्पष्ट विवरण दें।
+       दिखने वाली हर प्रमुख वस्तु या व्यक्ति की पहचान करें, उसकी दिशा (LEFT, CENTER, RIGHT), कैमरे से सटीक अनुमानित दूरी (जैसे "0.5m", "1.2m", "2m"), और मुख्य विवरण दें।`
+    : `You are an accessibility AI assistant for visually impaired users. Provide a thorough spatial analysis of this scene.
+       Give a clear overview of the environment and identify all key objects, obstacles, and people visible.
+       For every item, specify its spatial position (LEFT, CENTER, or RIGHT), estimated distance from the camera (e.g. "0.6m", "1.5m", "3m"), and notable details (color, status, shape).`;
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          {
+            inline_data: {
+              mime_type: 'image/jpeg',
+              data: cleanBase64
+            }
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      response_mime_type: 'application/json',
+      response_schema: {
+        type: 'OBJECT',
+        properties: {
+          description: {
+            type: 'STRING',
+            description: 'Comprehensive summary of the room or environment'
+          },
+          objects: {
+            type: 'ARRAY',
+            description: 'List of detected items, people, and obstacles with distance',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                name: { type: 'STRING', description: 'Name of the object or person' },
+                position: { 
+                  type: 'STRING', 
+                  enum: ['LEFT', 'CENTER', 'RIGHT'],
+                  description: 'Position relative to user point of view' 
+                },
+                distance: { 
+                  type: 'STRING', 
+                  description: 'Estimated distance with unit, e.g. 0.5m, 1.2m' 
+                },
+                details: { 
+                  type: 'STRING', 
+                  description: 'Notable attribute like color or posture' 
+                }
+              },
+              required: ['name', 'position', 'distance', 'details']
+            }
+          }
+        },
+        required: ['description', 'objects']
+      }
+    }
+  };
 
   let lastError = null;
-
   for (const model of VISION_MODELS) {
     try {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt },
-                { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.2,
-          },
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
-        lastError = new Error(await response.text());
+        const errText = await response.text();
+        lastError = new Error(`Gemini Error (${response.status}):${errText}`);
         continue;
       }
 
       const data = await response.json();
-      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (rawText) return JSON.parse(rawText);
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) continue;
+
+      // Strip markdown code fences if generated
+      const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+
+      return {
+        description: parsed.description || 'Scene analyzed successfully.',
+        objects: Array.isArray(parsed.objects) ? parsed.objects : []
+      };
     } catch (err) {
       lastError = err;
     }
