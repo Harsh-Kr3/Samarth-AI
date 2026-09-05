@@ -10,7 +10,7 @@ import {
   ZapOff,
   RotateCcw
 } from 'lucide-react';
-import { analyzeScene } from '../services/gemini';
+import { AnalyzeSurroundings as analyzeScene } from '../services/gemini';
 
 export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, autoCapture = false }) {
   const [loading, setLoading] = useState(false);
