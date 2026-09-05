@@ -146,9 +146,9 @@ export default function App() {
           height: 8,
           borderRadius: '50%',
           background: isMicReady ? '#34d399' : '#f59e0b',
-          boxShadow: isMicReady ? '0 0 8px #34d399' : 'none'
+          boxShadow: isMicReady ? '0 0 8px #47dfa7' : 'none'
         }} />
-        <span>{isMicReady ? 'Listening for commands...' : '🎙️ Tap to Enable Voice'}</span>
+        <span>{isMicReady ? 'Listening for commands...' : ' Voice Enabled'}</span>
       </div>
 
       {heardText && (

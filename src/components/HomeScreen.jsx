@@ -89,8 +89,8 @@ export default function HomeScreen({ onNavigate, language, ttsSpeak }) {
       {/* Hero */}
       <div className="home-hero">
         <div className="home-badge">
-          <span>🦯</span>
-          <span>AAVAHAN AI — Your Intelligent Visual Bridge</span>
+          <span>🧑🏼‍🦯</span>
+          <span>SAMARTH AI — Your Intelligent Visual Bridge</span>
         </div>
 
         <h1 className="home-title">
