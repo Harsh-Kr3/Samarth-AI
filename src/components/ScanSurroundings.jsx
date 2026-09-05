@@ -8,13 +8,15 @@ import {
   AlertCircle, 
   Zap, 
   ZapOff,
-  RotateCcw
+  RotateCcw,
+  Layers,
+  Compass
 } from 'lucide-react';
 import { AnalyzeSurroundings as analyzeScene } from '../services/gemini';
 
 export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, autoCapture = false }) {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState('');
+  const [analysisData, setAnalysisData] = useState(null); // { description: '', objects: [] }
   const [error, setError] = useState(null);
   const [facingMode, setFacingMode] = useState('environment');
   const [torchOn, setTorchOn] = useState(false);
@@ -55,7 +57,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play().catch((err) => console.warn('Play error:', err));
+          videoRef.current.play().catch((e) => console.warn('Video play warning:', e));
         };
       }
 
@@ -63,17 +65,17 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
       const capabilities = track.getCapabilities ? track.getCapabilities() : {};
       setHasTorch(Boolean(capabilities.torch));
     } catch (err) {
-      console.warn('Primary camera stream constraint failed, falling back...', err);
+      console.warn('Primary camera stream failed, trying fallback...', err);
       try {
         const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         streamRef.current = fallbackStream;
         if (videoRef.current) {
           videoRef.current.srcObject = fallbackStream;
-          videoRef.current.play().catch((e) => console.warn('Fallback play error:', e));
+          videoRef.current.play().catch((e) => console.warn('Fallback play warning:', e));
         }
       } catch (fallbackErr) {
-        console.error('Camera access denied:', fallbackErr);
-        setError('Camera blocked or unavailable. Please enable permissions.');
+        console.error('Camera permission denied:', fallbackErr);
+        setError('Camera blocked or unavailable. Please check browser permissions.');
       }
     }
   }, [facingMode, stopCamera]);
@@ -97,7 +99,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         await track.applyConstraints({ advanced: [{ torch: nextState }] });
         setTorchOn(nextState);
       } catch (e) {
-        console.warn('Torch control error:', e);
+        console.warn('Torch toggle error:', e);
       }
     }
   };
@@ -107,28 +109,34 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
 
-  // Safe speak handler
-  const handleSpeak = useCallback((textToSpeak) => {
-    if (!textToSpeak) return;
+  // Full spatial audio narrator
+  const handleSpeakData = useCallback((data) => {
+    if (!data) return;
 
-    let safeText = '';
-    if (typeof textToSpeak === 'string') {
-      safeText = textToSpeak;
-    } else if (typeof textToSpeak === 'object') {
-      safeText = textToSpeak.description || textToSpeak.text || JSON.stringify(textToSpeak);
+    let fullSpeech = '';
+    if (typeof data === 'string') {
+      fullSpeech = data;
     } else {
-      safeText = String(textToSpeak);
+      fullSpeech = data.description || '';
+      if (Array.isArray(data.objects) && data.objects.length > 0) {
+        const objectReadouts = data.objects.map((obj) => {
+          const pos = obj.position ? `at your ${obj.position.toLowerCase()}` : '';
+          const dist = obj.distance ? `about ${obj.distance}` : '';
+          return `${obj.name},${pos} ${dist}.${obj.details || ''}`.trim();
+        });
+        fullSpeech += `. Detected items: ${objectReadouts.join('. ')}`;
+      }
     }
 
     setIsPlayingAudio(true);
 
     if (ttsSpeak) {
-      ttsSpeak(safeText, appState.language);
-      const words = safeText.split(/\s+/).filter(Boolean).length;
-      setTimeout(() => setIsPlayingAudio(false), Math.max(2500, words * 380));
+      ttsSpeak(fullSpeech, appState.language);
+      const words = fullSpeech.split(/\s+/).filter(Boolean).length;
+      setTimeout(() => setIsPlayingAudio(false), Math.max(3000, words * 380));
     } else if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(safeText);
+      const utterance = new SpeechSynthesisUtterance(fullSpeech);
       utterance.lang = appState.language?.startsWith('hi') ? 'hi-IN' : 'en-US';
       utterance.onend = () => setIsPlayingAudio(false);
       utterance.onerror = () => setIsPlayingAudio(false);
@@ -143,7 +151,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
     setIsPlayingAudio(false);
   };
 
-  // Shutter capture & Vision analysis
+  // Capture Image & Query Vision AI
   const handleCapture = useCallback(async () => {
     if (!videoRef.current || loading) return;
 
@@ -174,74 +182,84 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         appState.apiKey || ''
       );
 
-      // Safe string extraction from API result
-      let safeDescription = '';
+      let parsed = { description: '', objects: [] };
+
       if (typeof response === 'string') {
-        safeDescription = response;
+        try {
+          parsed = JSON.parse(response);
+        } catch (_) {
+          parsed = { description: response, objects: [] };
+        }
       } else if (response && typeof response === 'object') {
-        safeDescription = response.description || response.text || JSON.stringify(response);
-      } else {
-        safeDescription = 'Scene analyzed successfully.';
+        parsed = {
+          description: response.description || response.summary || 'Scene analyzed.',
+          objects: Array.isArray(response.objects) ? response.objects : []
+        };
       }
 
-      setResult(safeDescription);
-      handleSpeak(safeDescription);
+      setAnalysisData(parsed);
+      handleSpeakData(parsed);
     } catch (err) {
       console.error('Vision analysis error:', err);
       const errPrompt = appState.language?.startsWith('hi')
         ? 'दृश्य का विश्लेषण करने में असमर्थ। कृपया पुनः प्रयास करें।'
         : 'Failed to analyze surroundings. Please try again.';
       setError(errPrompt);
-      handleSpeak(errPrompt);
+      if (ttsSpeak) ttsSpeak(errPrompt, appState.language);
     } finally {
       setLoading(false);
     }
-  }, [loading, appState.language, appState.apiKey, handleSpeak]);
+  }, [loading, appState.language, appState.apiKey, handleSpeakData, ttsSpeak]);
 
-  // 2.5s Auto-Capture mechanism
+  // 2.5-Second Auto-Capture
   useEffect(() => {
     if (!autoCapture || hasTriggeredAutoCapture.current) return;
     hasTriggeredAutoCapture.current = true;
 
-    handleSpeak(
-      appState.language?.startsWith('hi') 
-        ? 'कैमरा तैयार हो रहा है, ढाई सेकंड में फोटो ली जाएगी' 
-        : 'Camera ready. Capturing automatically in 2.5 seconds.'
-    );
+    if (ttsSpeak) {
+      ttsSpeak(
+        appState.language?.startsWith('hi') 
+          ? 'कैमरा तैयार हो रहा है, ढाई सेकंड में फोटो ली जाएगी' 
+          : 'Camera ready. Capturing automatically in 2.5 seconds.',
+        appState.language
+      );
+    }
 
-    const countdownInterval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev !== null && prev > 0.5) {
-          return Number((prev - 0.5).toFixed(1));
-        }
-        return 0;
-      });
+    const interval = setInterval(() => {
+      setCountdown((prev) => (prev !== null && prev > 0.5 ? Number((prev - 0.5).toFixed(1)) : 0));
     }, 500);
 
-    const autoTimer = setTimeout(() => {
-      clearInterval(countdownInterval);
+    const timer = setTimeout(() => {
+      clearInterval(interval);
       setCountdown(null);
       handleCapture();
     }, 2500);
 
     return () => {
-      clearInterval(countdownInterval);
-      clearTimeout(autoTimer);
+      clearInterval(interval);
+      clearTimeout(timer);
     };
-  }, [autoCapture, handleCapture, handleSpeak, appState.language]);
+  }, [autoCapture, handleCapture, ttsSpeak, appState.language]);
 
   const handleResetScan = () => {
-    setResult('');
+    setAnalysisData(null);
     setError(null);
     stopAudio();
     startCamera();
+  };
+
+  const getPositionColor = (pos) => {
+    const p = (pos || '').toUpperCase();
+    if (p === 'LEFT') return '#38bdf8';
+    if (p === 'RIGHT') return '#a855f7';
+    return '#10b981'; // CENTER
   };
 
   return (
     <div style={{
       position: 'relative',
       width: '100%',
-      maxWidth: '460px',
+      maxWidth: '480px',
       height: '100dvh',
       margin: '0 auto',
       display: 'flex',
@@ -252,10 +270,11 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
       overflow: 'hidden',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
+      {/* Top Bar */}
       <header style={{
         position: 'relative',
         zIndex: 10,
-        padding: '16px 18px 8px',
+        padding: '14px 18px 8px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between'
@@ -285,10 +304,10 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
 
         <div style={{ textAlign: 'center' }}>
           <h1 style={{ fontSize: '15px', fontWeight: 800, margin: 0 }}>
-            Scan Surroundings
+            Spatial Vision & Distance
           </h1>
           <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-            {loading ? 'Analyzing Scene...' : 'Real-Time Spatial AI'}
+            {loading ? 'Measuring Distances...' : 'Live Object Mapping'}
           </span>
         </div>
 
@@ -337,12 +356,12 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         </div>
       </header>
 
-      {/* Camera Viewport */}
+      {/* Camera Live Stream Port */}
       <main style={{
         position: 'relative',
         flex: 1,
-        margin: '8px 16px',
-        borderRadius: '26px',
+        margin: '6px 14px',
+        borderRadius: '24px',
         overflow: 'hidden',
         border: '1px solid rgba(255, 255, 255, 0.12)',
         background: '#000000',
@@ -366,6 +385,22 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
             background: '#ffffff',
             zIndex: 40
           }} />
+        )}
+
+        {!loading && !analysisData && (
+          <div style={{
+            position: 'absolute',
+            width: '220px',
+            height: '220px',
+            border: '2px dashed rgba(0, 219, 233, 0.45)',
+            borderRadius: '24px',
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <Compass size={32} color="rgba(0, 219, 233, 0.6)" />
+          </div>
         )}
 
         {countdown !== null && (
@@ -424,7 +459,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
               animation: 'spin 0.85s linear infinite'
             }} />
             <span style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff' }}>
-              Analyzing scene with AI...
+              Measuring objects and distances...
             </span>
           </div>
         )}
@@ -435,7 +470,7 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
             inset: '20px',
             background: 'rgba(185, 28, 28, 0.95)',
             borderRadius: '20px',
-            padding: '22px',
+            padding: '20px',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -466,36 +501,39 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
         )}
       </main>
 
-      {/* Bottom Output / Shutter Area */}
+      {/* Bottom Panel with Object Badges */}
       <footer style={{
         position: 'relative',
         zIndex: 20,
-        padding: '10px 18px 24px',
+        padding: '8px 14px 20px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 12
+        gap: 10
       }}>
-        {result ? (
+        {analysisData && (
           <div style={{
-            background: 'rgba(11, 19, 38, 0.92)',
+            background: 'rgba(11, 19, 38, 0.95)',
             backdropFilter: 'blur(20px)',
             border: '1px solid rgba(0, 219, 233, 0.4)',
-            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.5)',
+            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)',
             borderRadius: '20px',
-            padding: '14px 16px',
-            maxHeight: '130px',
+            padding: '14px',
+            maxHeight: '260px',
             display: 'flex',
             flexDirection: 'column',
-            gap: 8
+            gap: 10
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#00dbe9', fontWeight: 800 }}>
-                Surroundings Identified
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Layers size={16} color="#00dbe9" />
+                <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#00dbe9', fontWeight: 800 }}>
+                  Environment & Object Distances
+                </span>
+              </div>
 
               <button
                 type="button"
-                onClick={() => (isPlayingAudio ? stopAudio() : handleSpeak(result))}
+                onClick={() => (isPlayingAudio ? stopAudio() : handleSpeakData(analysisData))}
                 style={{
                   background: 'rgba(255, 255, 255, 0.1)',
                   border: 'none',
@@ -515,27 +553,82 @@ export default function ScanSurroundings({ onBack, appState = {}, ttsSpeak, auto
               </button>
             </div>
 
-            <div style={{ overflowY: 'auto' }}>
-              <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.45, color: '#f8fafc' }}>
-                {result}
+            <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, paddingRight: '4px' }}>
+              <p style={{ margin: 0, fontSize: '12.5px', lineHeight: 1.4, color: '#f8fafc' }}>
+                {analysisData.description}
               </p>
+
+              {Array.isArray(analysisData.objects) && analysisData.objects.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' }}>
+                    Detected Objects ({analysisData.objects.length})
+                  </span>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(135px, 1fr))',
+                    gap: '6px'
+                  }}>
+                    {analysisData.objects.map((obj, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          background: 'rgba(15, 23, 42, 0.85)',
+                          border: `1px solid ${getPositionColor(obj.position)}55`,
+                          borderLeft: `3px solid ${getPositionColor(obj.position)}`,
+                          borderRadius: '10px',
+                          padding: '7px 9px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 3
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: '#ffffff' }}>
+                            {obj.name}
+                          </span>
+                          <span style={{
+                            fontSize: '10.5px',
+                            fontWeight: 800,
+                            color: '#00dbe9',
+                            background: 'rgba(0, 219, 233, 0.18)',
+                            padding: '1px 6px',
+                            borderRadius: '4px'
+                          }}>
+                            {obj.distance || '~1m'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '10px', color: '#94a3b8' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85px' }}>
+                            {obj.details || 'Detected'}
+                          </span>
+                          <span style={{ fontWeight: 700, color: getPositionColor(obj.position) }}>
+                            {obj.position || 'CENTER'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        ) : null}
+        )}
 
+        {/* Shutter & Rescan Dock */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           position: 'relative'
         }}>
-          {result && (
+          {analysisData && (
             <button
               type="button"
               onClick={handleResetScan}
               style={{
                 position: 'absolute',
-                left: 14,
+                left: 10,
                 background: 'rgba(30, 41, 59, 0.85)',
                 border: '1px solid rgba(255, 255, 255, 0.15)',
                 borderRadius: '999px',

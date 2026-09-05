@@ -48,11 +48,39 @@ export async function AnalyzeSurroundings(base64Image, language = 'en', customKe
 
   const prompt = isHindi
     ? `आप दृष्टिबाधित उपयोगकर्ताओं के लिए सहायक एआई हैं। इस दृश्य का संपूर्ण स्थानिक (spatial) विश्लेषण करें।
-       कमरे और समग्र वातावरण का स्पष्ट विवरण दें।
-       दिखने वाली हर प्रमुख वस्तु या व्यक्ति की पहचान करें, उसकी दिशा (LEFT, CENTER, RIGHT), कैमरे से सटीक अनुमानित दूरी (जैसे "0.5m", "1.2m", "2m"), और मुख्य विवरण दें।`
+उत्तर केवल और केवल वैध JSON ब्लॉक में दें, किसी मार्कडाउन कोड ब्लॉक या अतिरिक्त बातचीत के बिना:
+{
+  "description": "कमरे, व्यक्ति और समग्र वातावरण का स्पष्ट विवरण",
+  "objects": [
+    {
+      "name": "वस्तु या व्यक्ति का नाम",
+      "position": "LEFT",
+      "distance": "0.6m",
+      "details": "संक्षिप्त स्थिति या रंग"
+    }
+  ]
+}
+नियम:
+1. 'position' केवल "LEFT", "CENTER", या "RIGHT" होनी चाहिए।
+2. 'distance' में सटीक अनुमानित दूरी (जैसे 0.5m, 1.2m, 2m, 3m) अवश्य दें।
+3. सभी दृश्यमान वस्तुओं (व्यक्ति, फोन, शेल्फ, खिड़की, दरवाजा, दीवार, पंखा ইত্যাদি) की पहचान करें।`
     : `You are an accessibility AI assistant for visually impaired users. Provide a thorough spatial analysis of this scene.
-       Give a clear overview of the environment and identify all key objects, obstacles, and people visible.
-       For every item, specify its spatial position (LEFT, CENTER, or RIGHT), estimated distance from the camera (e.g. "0.6m", "1.5m", "3m"), and notable details (color, status, shape).`;
+You MUST respond with a pure, valid JSON object only (no markdown, no extra text):
+{
+  "description": "Clear overall description of the room, person, and environment.",
+  "objects": [
+    {
+      "name": "Name of object, person, or obstacle",
+      "position": "LEFT",
+      "distance": "0.6m",
+      "details": "Color, state, or posture"
+    }
+  ]
+}
+Rules:
+1. 'position' MUST be one of: "LEFT", "CENTER", "RIGHT".
+2. 'distance' MUST be an estimated measurement with units (e.g. 0.5m, 1.2m, 2m, 3m).
+3. Identify ALL visible items (e.g. person, phone, chair, window, wall, shelves, clothes, computer).`;
 
   const payload = {
     contents: [
@@ -69,42 +97,8 @@ export async function AnalyzeSurroundings(base64Image, language = 'en', customKe
       }
     ],
     generationConfig: {
-      temperature: 0.2,
-      response_mime_type: 'application/json',
-      response_schema: {
-        type: 'OBJECT',
-        properties: {
-          description: {
-            type: 'STRING',
-            description: 'Comprehensive summary of the room or environment'
-          },
-          objects: {
-            type: 'ARRAY',
-            description: 'List of detected items, people, and obstacles with distance',
-            items: {
-              type: 'OBJECT',
-              properties: {
-                name: { type: 'STRING', description: 'Name of the object or person' },
-                position: { 
-                  type: 'STRING', 
-                  enum: ['LEFT', 'CENTER', 'RIGHT'],
-                  description: 'Position relative to user point of view' 
-                },
-                distance: { 
-                  type: 'STRING', 
-                  description: 'Estimated distance with unit, e.g. 0.5m, 1.2m' 
-                },
-                details: { 
-                  type: 'STRING', 
-                  description: 'Notable attribute like color or posture' 
-                }
-              },
-              required: ['name', 'position', 'distance', 'details']
-            }
-          }
-        },
-        required: ['description', 'objects']
-      }
+      temperature: 0.1,
+      response_mime_type: "application/json"
     }
   };
 
@@ -128,14 +122,27 @@ export async function AnalyzeSurroundings(base64Image, language = 'en', customKe
       const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!rawText) continue;
 
-      // Strip markdown code fences if generated
-      const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
+      // Extract JSON using greedy object match to bypass fences or prefix text
+      let jsonString = rawText.trim();
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        jsonString = jsonMatch[0];
+      }
 
-      return {
-        description: parsed.description || 'Scene analyzed successfully.',
-        objects: Array.isArray(parsed.objects) ? parsed.objects : []
-      };
+      try {
+        const parsed = JSON.parse(jsonString);
+        return {
+          description: parsed.description || 'Scene analyzed successfully.',
+          objects: Array.isArray(parsed.objects) ? parsed.objects : []
+        };
+      } catch (_) {
+        // Safe regex recovery if trailing comma or truncated JSON occurred
+        const descMatch = rawText.match(/"description"\s*:\s*"([^"]+)"/);
+        return {
+          description: descMatch ? descMatch[1] : rawText.replace(/```json|```/g, '').trim(),
+          objects: []
+        };
+      }
     } catch (err) {
       lastError = err;
     }
@@ -143,6 +150,54 @@ export async function AnalyzeSurroundings(base64Image, language = 'en', customKe
 
   throw lastError || new Error('All vision models failed.');
 }
+
+  let lastError = null;
+  for (const model of VISION_MODELS) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        lastError = new Error(`Gemini Error (${response.status}):${errText}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) continue;
+
+      // Extract JSON cleanly even if wrapped in ```json ``` or extra text
+      let jsonString = rawText.trim();
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        jsonString = jsonMatch[0];
+      }
+
+      try {
+        const parsed = JSON.parse(jsonString);
+        return {
+          description: parsed.description || 'Scene analyzed successfully.',
+          objects: Array.isArray(parsed.objects) ? parsed.objects : []
+        };
+      } catch (parseErr) {
+        console.warn('Direct JSON parse failed, returning fallback text:', rawText);
+        return {
+          description: rawText.replace(/```json/gi, '').replace(/```/g, '').trim(),
+          objects: []
+        };
+      }
+    } catch (err) {
+      lastError = err;
+      console.warn(`Model ${model} failed:`, err);
+    }
+  }
+
+  throw lastError || new Error('All vision models failed.');
 
 /**
  * Text extraction / OCR
