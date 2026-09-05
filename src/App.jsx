@@ -51,42 +51,65 @@ export default function App() {
     setDemoMode(d => !d);
   }, []);
 
-  // Initialize Voice Assistant
-  const { wakeState, isMicReady, startListening } = useVoiceWakeAssistant({
+  // Voice Assistant Hook
+  const { isMicReady, isListeningForCommand, startListening, heardText } = useVoiceWakeAssistant({
     onNavigate: nav,
     currentLanguage: language,
     onLanguageChange: handleLanguageChange,
     ttsSpeak
   });
 
-  // Attempt auto-activation on initial mount
+  // Play Greeting first, then start listening EXACTLY when greeting ends
   useEffect(() => {
-    startListening();
+    const greetingText = GREETINGS[language] || GREETINGS['en-IN'];
 
-    // Browser audio unlock listener for any initial touch/click/keypress
-    const handleFirstInteraction = () => {
-      startListening();
-      window.removeEventListener('click', handleFirstInteraction);
-      window.removeEventListener('keydown', handleFirstInteraction);
-      window.removeEventListener('touchstart', handleFirstInteraction);
+    const triggerGreetingAndListen = () => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(greetingText);
+        utterance.lang = language?.startsWith('hi') ? 'hi-IN' : 'en-IN';
+        utterance.rate = 1.0;
+
+        // Exact handoff: Start listening the instant speech finishes
+        utterance.onend = () => {
+          console.log('[Samarth AI] Greeting finished. Ear activated.');
+          startListening();
+        };
+        utterance.onerror = () => {
+          startListening();
+        };
+
+        window.speechSynthesis.speak(utterance);
+      } else {
+        ttsSpeak(greetingText);
+        setTimeout(() => startListening(), 3500);
+      }
     };
 
-    window.addEventListener('click', handleFirstInteraction);
-    window.addEventListener('keydown', handleFirstInteraction);
-    window.addEventListener('touchstart', handleFirstInteraction);
+    // User gesture listener for browser auto-play unlock
+    const handleFirstGesture = () => {
+      triggerGreetingAndListen();
+      window.removeEventListener('click', handleFirstGesture);
+      window.removeEventListener('touchstart', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
+    };
 
-    const greeting = GREETINGS[language] || GREETINGS['en-IN'];
-    const timer = setTimeout(() => {
-      ttsSpeak(greeting);
-    }, 1200);
+    // Attempt automatic playback
+    const autoTimer = setTimeout(() => {
+      triggerGreetingAndListen();
+    }, 600);
+
+    window.addEventListener('click', handleFirstGesture);
+    window.addEventListener('touchstart', handleFirstGesture);
+    window.addEventListener('keydown', handleFirstGesture);
 
     return () => {
-      clearTimeout(timer);
-      window.removeEventListener('click', handleFirstInteraction);
-      window.removeEventListener('keydown', handleFirstInteraction);
-      window.removeEventListener('touchstart', handleFirstInteraction);
+      clearTimeout(autoTimer);
+      window.removeEventListener('click', handleFirstGesture);
+      window.removeEventListener('touchstart', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
     };
-  }, [startListening, language, ttsSpeak]);
+  }, [language, startListening, ttsSpeak]);
 
   const appState = { language, apiKey, demoMode };
 
@@ -96,78 +119,53 @@ export default function App() {
       role="application" 
       aria-label="Samarth AI Accessibility Assistant"
     >
-      {/* Mic Status Indicator / One-click manual activator */}
-      {!isMicReady ? (
-        <button 
-          type="button"
-          onClick={() => startListening()}
-          style={{
-            position: 'fixed',
-            top: 14,
-            right: 18,
-            zIndex: 9999,
-            background: 'linear-gradient(135deg, #0284c7, #0d9488)',
-            border: '1px solid rgba(255,255,255,0.35)',
-            borderRadius: 999,
-            padding: '7px 16px',
-            color: '#ffffff',
-            fontSize: '12px',
-            fontWeight: 700,
-            cursor: 'pointer',
-            boxShadow: '0 4px 15px rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8
-          }}
-        >
-          <span>🎙️ Tap to Enable Voice Ear</span>
-        </button>
-      ) : (
-        <div 
-          style={{
-            position: 'fixed',
-            top: 14,
-            right: 18,
-            zIndex: 9999,
-            background: 'rgba(6, 78, 59, 0.9)',
-            border: '1px solid #10b981',
-            borderRadius: 999,
-            padding: '5px 14px',
-            color: '#6ee7b7',
-            fontSize: '11.5px',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6
-          }}
-        >
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
-          <span>Listening: "I need help"</span>
-        </div>
-      )}
-
-      {/* Active Listening Indicator */}
-      {wakeState === 'LISTENING_COMMAND' && (
-        <div style={{
+      {/* Visual Status Indicator */}
+      <div 
+        style={{
           position: 'fixed',
-          top: 68,
-          left: '50%',
-          transform: 'translateX(-50%)',
+          top: 14,
+          right: 18,
           zIndex: 9999,
-          background: '#071524',
-          border: '1.5px solid #00dbe9',
-          boxShadow: '0 0 30px rgba(0, 219, 233, 0.65)',
+          background: isMicReady ? 'rgba(6, 78, 59, 0.95)' : 'rgba(30, 41, 59, 0.9)',
+          border: `1px solid ${isMicReady ? '#10b981' : 'rgba(255,255,255,0.2)'}`,
           borderRadius: 999,
-          padding: '10px 24px',
-          color: '#ffffff',
-          fontSize: '14px',
+          padding: '6px 16px',
+          color: isMicReady ? '#6ee7b7' : '#94a3b8',
+          fontSize: '12px',
           fontWeight: 700,
           display: 'flex',
           alignItems: 'center',
-          gap: 12
+          gap: 8,
+          boxShadow: '0 4px 15px rgba(0,0,0,0.4)',
+          cursor: isMicReady ? 'default' : 'pointer'
+        }}
+        onClick={() => !isMicReady && startListening()}
+      >
+        <span style={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          background: isMicReady ? '#34d399' : '#f59e0b',
+          boxShadow: isMicReady ? '0 0 8px #34d399' : 'none'
+        }} />
+        <span>{isMicReady ? 'Listening for commands...' : '🎙️ Tap to Enable Voice'}</span>
+      </div>
+
+      {heardText && (
+        <div style={{
+          position: 'fixed',
+          bottom: 24,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          background: 'rgba(15, 23, 42, 0.9)',
+          border: '1px solid rgba(0, 219, 233, 0.4)',
+          borderRadius: 999,
+          padding: '6px 18px',
+          fontSize: '12px',
+          color: '#38bdf8'
         }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#00dbe9' }} />
-          <span>Listening: "Sure, ask anything..."</span>
+          Heard: "{heardText}"
         </div>
       )}
 
