@@ -39,7 +39,7 @@ export async function callGeminiAPI(endpoint, body, apiKey) {
 /**
  * Analyze surroundings (Vision)
  */
-export async function analyzeSurroundings(base64Image, language = 'en', customKey = '') {
+export async function AnalyzeSurroundings(base64Image, language = 'en', customKey = '') {
   const apiKey = (customKey || DEFAULT_API_KEY || '').trim();
   if (!apiKey) throw new Error('API key is missing.');
 
