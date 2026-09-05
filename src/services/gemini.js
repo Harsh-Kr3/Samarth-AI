@@ -211,3 +211,12 @@ export async function askAssistant(prompt, language = 'en', customKey = '') {
 
   throw lastError || new Error('Failed to get answer from assistant.');
 }
+/**
+ * Demo OCR fallback response for ReadText
+ */
+export function getDemoOCRResponse(language = 'en') {
+  if (language?.startsWith('hi')) {
+    return 'यह एक डेमो टेक्स्ट है। समर-प्रोजेक्ट रिपोर्ट: समर्थ एआई दृष्टिबाधित लोगों के लिए एक सहायक प्रणाली है।';
+  }
+  return 'DEMO OCR RESULT: Samarth AI visual assistant for the visually impaired. All systems functioning normally.';
+}
