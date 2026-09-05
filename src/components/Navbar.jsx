@@ -23,7 +23,7 @@ export default function Navbar({
           </div>
           <div>
             <div className="navbar-title">SAMARTH AI</div>
-            <div className="navbar-subtitle">आवाहन — Visual Assistant</div>
+            <div className="navbar-subtitle">समर्थ— Visual Assistant</div>
           </div>
         </button>
 
@@ -42,7 +42,7 @@ export default function Navbar({
               className="status-dot"
               style={{ background: 'var(--color-success)' }}
             />
-            <span>AI Active</span>
+            <span></span>
           </div>
 
           {/* Language Pill */}
